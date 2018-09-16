@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jhead/bedrock-proxy/internal/proto"
+	"github.com/jhead/phantom/internal/proto"
 )
 
 const maxMTU = 1472

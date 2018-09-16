@@ -1,13 +1,17 @@
 .PHONY: prep
 
-OUT=bin/proxy
+OUT=bin/phantom.exe bin/phantom-linux bin/phantom-macos
 
-build: ${OUT}
+build: prep ${OUT}
 
-bin/proxy: prep
-	GOOS=darwin GOARCH=amd64 go build -o bin/proxy-macos64 cmd/proxy.go
-	GOOS=linux GOARCH=amd64 go build -o bin/proxy-linux cmd/proxy.go
-	GOOS=windows GOARCH=amd64 go build -o bin/proxy.exe cmd/proxy.go
+bin/phantom.exe:
+	GOOS=windows GOARCH=amd64 go build -o bin/phantom.exe cmd/proxy.go
+
+bin/phantom-macos:
+	GOOS=darwin GOARCH=amd64 go build -o bin/phantom-macos cmd/proxy.go
+
+bin/phantom-linux:
+	GOOS=linux GOARCH=amd64 go build -o bin/phantom-linux cmd/proxy.go
 
 prep:
 	mkdir -p bin
