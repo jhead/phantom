@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jhead/bedrock-proxy/internal/proxy"
+	"github.com/jhead/phantom/internal/proxy"
 )
 
 var bindAddressString string

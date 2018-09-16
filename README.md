@@ -1,14 +1,12 @@
-# bedrock-proxy
+# phantom
 
-Makes hosted Bedrock/MCPE servers show up as LAN servers, specifically for Xbox and mobile.
+Makes hosted Bedrock/MCPE servers show up as LAN servers, specifically for Xbox.
 
 You can now play on remote servers (not Realms!) on your Xbox with friends.
 
 ## Installing
 
-*Download available soon.*
-
-For now, you can clone and build it locally.
+[Download](https://github.com/jhead/phantom/releases) and run it. It's that easy.
 
 ## Usage
 
@@ -54,4 +52,3 @@ computer, a VM, or even with a Minecraft hosting service.
 Note that you almost definitely need to create a firewall rule for this to work
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
 your Windows Firewall settings and open up port 19132 (UDP).
-

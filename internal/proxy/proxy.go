@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jhead/bedrock-proxy/internal/proto"
+	"github.com/jhead/phantom/internal/proto"
 )
 
 const maxMTU = 1472
@@ -198,7 +198,7 @@ func (proxy *ProxyServer) handleBroadcastPackets() {
 
 		logger.Printf("Ping from %v!\n", packet.client)
 
-		serverName := fmt.Sprintf("MCPE;Remote Server %s;2 7;0.11.0;0;20", proxy.remoteServerAddress)
+		serverName := fmt.Sprintf("MCPE;Remote Server %s;2 7;1.6.0;0;20", proxy.remoteServerAddress)
 		replyBuffer := proto.UnconnectedReply{id, magic, serverName}.Build()
 
 		proxy.server.WriteTo(replyBuffer.Bytes(), packet.client)
