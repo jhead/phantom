@@ -14,8 +14,6 @@ type UnconnectedReply struct {
 	ServerName string
 }
 
-// serverName := fmt.Sprintf("MCPE;Remote %s;2 7;0.11.0;0;20", RemoteServerIP)
-
 func (r UnconnectedReply) Build() bytes.Buffer {
 	var outBuffer bytes.Buffer
 
