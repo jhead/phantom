@@ -49,6 +49,6 @@ computer, a VM, or even with a Minecraft hosting service.
 - Only Minecraft for Windows 10, iOS/Android, and Xbox are currently supported.
 - Nintendo Switch does not currently have LAN server support.
 
-Note that you almost definitely need to create a firewall rule for this to work
+Note that you almost definitely need to create a firewall rule for this to work.
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
 your Windows Firewall settings and open up port 19132 (UDP).
