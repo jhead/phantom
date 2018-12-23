@@ -10,7 +10,9 @@ You can now play on remote servers (not Realms!) on your Xbox with friends.
 
 ## Usage
 
-```
+Open up a command prompt or terminal to the location where you downloaded it.
+
+```bash
 Usage: ./proxy <server-ip>
 
 Options:
@@ -18,9 +20,23 @@ Options:
     	Bind address and port (default "0.0.0.0:19132")
 ```
 
+**Example**
+
+Connect to a server at IP `104.219.6.162` port `19132`:
+
+```bash
+$ ./proxy 104.219.6.162:19132
+```
+
+Same as above but bind to a specific local IP:
+
+```bash
+$ ./proxy -bind 10.0.0.5:19132 104.219.6.162:19132
+```
+
 ## Building
 
-Makefile builds for macOS, Linux, and Windows.
+Makefile builds for Windows, macOS, and Linux, including x86 and ARM.
 
 ```bash
 make
@@ -46,8 +62,9 @@ computer, a VM, or even with a Minecraft hosting service.
 ## Supported platforms
 
 - This tool should work on Windows, macOS, and Linux.
+- ARM builds are available for Raspberry Pi and similar SOCs.
 - Only Minecraft for Windows 10, iOS/Android, and Xbox are currently supported.
-- Nintendo Switch does not currently have LAN server support.
+- PS4 and Nintendo Switch do not support this functionality.
 
 Note that you almost definitely need to create a firewall rule for this to work.
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
