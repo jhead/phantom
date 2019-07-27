@@ -40,6 +40,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s <server-ip>\n\nOptions:\n", os.Args[0])
+	fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] -server <server-ip>\n\nOptions:\n", os.Args[0])
 	flag.PrintDefaults()
 }
