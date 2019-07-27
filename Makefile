@@ -1,6 +1,6 @@
 .PHONY: prep
 
-OUT=bin/phantom.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm6 bin/phantom-linux-arm7
+OUT=bin/phantom.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7
 
 build: prep ${OUT}
 
@@ -12,6 +12,9 @@ bin/phantom-macos:
 
 bin/phantom-linux:
 	GOOS=linux GOARCH=amd64 go build -o bin/phantom-linux cmd/proxy.go
+
+bin/phantom-linux-arm5:
+	GOOS=linux GOARCH=arm GOARM=5 go build -o bin/phantom-linux-arm5 cmd/proxy.go
 
 bin/phantom-linux-arm6:
 	GOOS=linux GOARCH=arm GOARM=6 go build -o bin/phantom-linux-arm6 cmd/proxy.go
