@@ -6,11 +6,21 @@ You can now play on remote servers (not Realms!) on your Xbox with friends.
 
 ## Installing
 
-[Download](https://github.com/jhead/phantom/releases) and run it. It's that easy.
+phantom is a command line application with no GUI (yet). See the usage section below.
+
+[Download](https://github.com/jhead/phantom/releases) phantom from the releases page.
+
+**macOS / Linux**
+
+Add execute persmissions if necessary:
+
+```bash
+$ chmod u+x ./proxy
+```
 
 ## Usage
 
-Open up a command prompt or terminal to the location where you downloaded it.
+Open up a command prompt (Windows) or terminal (macOS & Linux) to the location where you downloaded it.
 
 ```bash
 Usage: ./proxy <server-ip>
@@ -64,7 +74,7 @@ computer, a VM, or even with a Minecraft hosting service.
 - This tool should work on Windows, macOS, and Linux.
 - ARM builds are available for Raspberry Pi and similar SOCs.
 - Only Minecraft for Windows 10, iOS/Android, and Xbox are currently supported.
-- PS4 and Nintendo Switch do not support this functionality.
+- **PS4 and Nintendo Switch are not supported.**
 
 Note that you almost definitely need to create a firewall rule for this to work.
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
