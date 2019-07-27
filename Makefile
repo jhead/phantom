@@ -23,5 +23,5 @@ prep:
 	mkdir -p bin
 
 clean:
-	rm -r bin
+	rm -rf bin
 

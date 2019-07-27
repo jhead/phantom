@@ -12,17 +12,19 @@ var bindAddressString string
 var serverAddressString string
 
 func main() {
-	bindArg := flag.String("bind", "0.0.0.0:19132", "Bind address and port")
+	bindArg := flag.String("bind", "0.0.0.0:19132", "IP address and port to listen on")
+	serverArg := flag.String("server", "", "Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
+
 	flag.Usage = usage
 	flag.Parse()
 
-	if len(os.Args) != 2 {
-		usage()
+	if *serverArg == "" {
+		flag.Usage()
 		return
 	}
 
 	bindAddressString = *bindArg
-	serverAddressString = os.Args[1]
+	serverAddressString = *serverArg
 
 	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
 
