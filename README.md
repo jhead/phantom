@@ -15,15 +15,17 @@ phantom is a command line application with no GUI (yet). See the usage section b
 Add execute persmissions if necessary:
 
 ```bash
-$ chmod u+x ./proxy
+$ chmod u+x ./phantom-<os>
 ```
+
+Just replace `<os>` with macos, linux, etc. for the correct OS you're using.
 
 ## Usage
 
 Open up a command prompt (Windows) or terminal (macOS & Linux) to the location where you downloaded it.
 
 ```bash
-Usage: ./proxy <server-ip>
+Usage: ./phantom-<os> <server-ip>
 
 Options:
   -bind string
@@ -35,13 +37,13 @@ Options:
 Connect to a server at IP `104.219.6.162` port `19132`:
 
 ```bash
-$ ./proxy 104.219.6.162:19132
+$ ./phantom-<os> 104.219.6.162:19132
 ```
 
 Same as above but bind to a specific local IP:
 
 ```bash
-$ ./proxy -bind 10.0.0.5:19132 104.219.6.162:19132
+$ ./phantom-<os> -bind 10.0.0.5:19132 104.219.6.162:19132
 ```
 
 ## Building
