@@ -6,14 +6,11 @@ import (
 	"net"
 	"os"
 	"time"
-
-	"github.com/jhead/phantom/internal/proto"
 )
 
 const maxMTU = 1472
 
 var logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-var idleTimeout = time.Duration(120) * time.Second
 var idleCheckInterval = time.Duration(5) * time.Second
 
 type clientMap map[string]*net.UDPConn
@@ -27,6 +24,13 @@ type ProxyServer struct {
 	idleMap             idleMap
 	pingChannel         chan PingPacket
 	dead                bool
+	prefs               ProxyPrefs
+}
+
+type ProxyPrefs struct {
+	BindAddress  string
+	RemoteServer string
+	IdleTimeout  time.Duration
 }
 
 type PingPacket struct {
@@ -34,13 +38,13 @@ type PingPacket struct {
 	data   []byte
 }
 
-func New(bind, remoteServer string) (*ProxyServer, error) {
-	bindAddress, err := net.ResolveUDPAddr("udp", bind)
+func New(prefs ProxyPrefs) (*ProxyServer, error) {
+	bindAddress, err := net.ResolveUDPAddr("udp", prefs.BindAddress)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid bind address: %s", err)
 	}
 
-	remoteServerAddress, err := net.ResolveUDPAddr("udp", remoteServer)
+	remoteServerAddress, err := net.ResolveUDPAddr("udp", prefs.RemoteServer)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid server address: %s", err)
 	}
@@ -53,6 +57,7 @@ func New(bind, remoteServer string) (*ProxyServer, error) {
 		make(idleMap),
 		make(chan PingPacket),
 		false,
+		prefs,
 	}, nil
 }
 
@@ -72,9 +77,6 @@ func (proxy *ProxyServer) Start() error {
 
 	// Close connection upon exit
 	defer proxy.server.Close()
-
-	// Start goroutine for handling ping broadcasts
-	go proxy.handleBroadcastPackets()
 
 	// Start goroutine for cleaning up idle connections
 	go proxy.idleConnectionCleanup()
@@ -120,13 +122,6 @@ func (proxy *ProxyServer) processDataFromClients(packetBuffer []byte) error {
 	}
 
 	data := packetBuffer[:read]
-	packetID := data[0]
-
-	// Broadcasted ping packet; offload to our ping handler
-	if packetID == proto.UnconnectedRequestID {
-		proxy.pingChannel <- PingPacket{client, data}
-		return nil
-	}
 
 	// All other packets should be proxied
 	conn, err := proxy.getServerConnection(client)
@@ -156,8 +151,7 @@ func (proxy *ProxyServer) getServerConnection(client net.Addr) (*net.UDPConn, er
 
 	// New connection needed
 	logger.Printf("Opening connection to %s for new client %s!\n", proxy.remoteServerAddress, client)
-
-	conn, err := net.DialUDP("udp", nil, proxy.remoteServerAddress)
+	conn, err := proxy.newServerConnection()
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +160,16 @@ func (proxy *ProxyServer) getServerConnection(client net.Addr) (*net.UDPConn, er
 
 	// Launch goroutine to pass packets from server to client
 	go proxy.processDataFromServer(conn, client)
+
+	return conn, nil
+}
+
+func (proxy *ProxyServer) newServerConnection() (*net.UDPConn, error) {
+	logger.Printf("Opening connection to %s\n", proxy.remoteServerAddress)
+	conn, err := net.DialUDP("udp", nil, proxy.remoteServerAddress)
+	if err != nil {
+		return nil, err
+	}
 
 	return conn, nil
 }
@@ -188,23 +192,6 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 	}
 }
 
-func (proxy *ProxyServer) handleBroadcastPackets() {
-	logger.Println("Starting ping handler")
-
-	for !proxy.dead {
-		packet := <-proxy.pingChannel
-		id := packet.data[1:9]
-		magic := packet.data[9:25]
-
-		logger.Printf("Ping from %v!\n", packet.client)
-
-		serverName := fmt.Sprintf("MCPE;Remote Server %s;2 7;1.6.0;0;20", proxy.remoteServerAddress)
-		replyBuffer := proto.UnconnectedReply{id, magic, serverName}.Build()
-
-		proxy.server.WriteTo(replyBuffer.Bytes(), packet.client)
-	}
-}
-
 func (proxy *ProxyServer) idleConnectionCleanup() {
 	logger.Println("Starting idle connection handler")
 
@@ -212,7 +199,7 @@ func (proxy *ProxyServer) idleConnectionCleanup() {
 		currentTime := time.Now()
 
 		for key, lastActive := range proxy.idleMap {
-			if lastActive.Add(idleTimeout).Before(currentTime) {
+			if lastActive.Add(proxy.prefs.IdleTimeout).Before(currentTime) {
 				logger.Printf("Cleaning up idle connection: %s", key)
 				proxy.clients[key].Close()
 				delete(proxy.clients, key)

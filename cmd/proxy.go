@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jhead/phantom/internal/proxy"
 )
@@ -14,6 +15,7 @@ var serverAddressString string
 func main() {
 	bindArg := flag.String("bind", "0.0.0.0:19132", "IP address and port to listen on")
 	serverArg := flag.String("server", "", "Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
+	timeoutArg := flag.Int("timeout", 60, "Seconds to wait before cleaning up a disconnected client")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -25,10 +27,16 @@ func main() {
 
 	bindAddressString = *bindArg
 	serverAddressString = *serverArg
+	idleTimeout := time.Duration(*timeoutArg) * time.Second
 
 	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
 
-	proxyServer, err := proxy.New(bindAddressString, serverAddressString)
+	proxyServer, err := proxy.New(proxy.ProxyPrefs{
+		bindAddressString,
+		serverAddressString,
+		idleTimeout,
+	})
+
 	if err != nil {
 		fmt.Printf("Failed to init server: %s\n", err)
 		return
