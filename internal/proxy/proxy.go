@@ -27,9 +27,9 @@ type ProxyServer struct {
 	idleMap             idleMap
 	pingChannel         chan PingPacket
 	dead                bool
-	version				string
-	name				string
-	users				int
+    version             string
+    name                string
+    users               int
 }
 
 type PingPacket struct {
