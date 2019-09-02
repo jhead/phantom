@@ -31,10 +31,13 @@ func main() {
 
 	bindAddressString = *bindArg
 	serverAddressString = *serverArg
+	versionString = *versionArg
+	nameString = *nameArg
+	usersInt = *usersArg
 
 	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
 
-	proxyServer, err := proxy.New(bindAddressString, serverAddressString)
+	proxyServer, err := proxy.New(bindAddressString, serverAddressString, versionString, nameString, usersInt)
 	if err != nil {
 		fmt.Printf("Failed to init server: %s\n", err)
 		return
