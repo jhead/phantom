@@ -37,7 +37,7 @@ type PingPacket struct {
 	data   []byte
 }
 
-func New(bind, remoteServer string) (*ProxyServer, error) {
+func New(bind, remoteServer string, version string, name string, users int) (*ProxyServer, error) {
 	bindAddress, err := net.ResolveUDPAddr("udp", bind)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid bind address: %s", err)
