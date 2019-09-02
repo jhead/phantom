@@ -17,6 +17,9 @@ var usersInt int
 func main() {
 	bindArg := flag.String("bind", "0.0.0.0:19132", "IP address and port to listen on")
 	serverArg := flag.String("server", "", "Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
+	versionArg := flag.String("version", "1.12.0", "Server version to display as")
+	nameArg := flag.String("name", "Remote Server", "Name of the remote server")
+	usersArg := flag.Int("users", 20, "Number of users of the remote server")
 
 	flag.Usage = usage
 	flag.Parse()
