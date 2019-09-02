@@ -63,6 +63,9 @@ func New(bind, remoteServer string, version string, name string, users int) (*Pr
 }
 
 func (proxy *ProxyServer) Start() error {
+	logger.Printf("Name: %s\n", proxy.name)
+	logger.Printf("Version: %v\n", proxy.version)
+	logger.Printf("Users: %v\n", proxy.users)
 	logger.Printf("Binding proxy server to: %v\n", proxy.bindAddress)
 
 	// Bind local UDP port to receive data from Minecraft clients
