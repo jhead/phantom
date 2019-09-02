@@ -10,6 +10,9 @@ import (
 
 var bindAddressString string
 var serverAddressString string
+var versionString string
+var nameString string
+var usersInt int
 
 func main() {
 	bindArg := flag.String("bind", "0.0.0.0:19132", "IP address and port to listen on")
