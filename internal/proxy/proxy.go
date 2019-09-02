@@ -56,6 +56,9 @@ func New(bind, remoteServer string, version string, name string, users int) (*Pr
 		make(idleMap),
 		make(chan PingPacket),
 		false,
+		version,
+		name,
+		users,
 	}, nil
 }
 
