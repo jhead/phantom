@@ -30,6 +30,15 @@ Usage: ./phantom-<os> <server-ip>
 Options:
   -bind string
     	Bind address and port (default "0.0.0.0:19132")
+
+  -name string
+      Set the name of the server (default "Remote Server")
+
+  -version string
+      Set the version of the server (default 1.12.0)
+
+  -users integer
+      Set the number of users of the server (default 20)
 ```
 
 **Example**
@@ -44,6 +53,24 @@ Same as above but bind to a specific local IP:
 
 ```bash
 $ ./phantom-<os> -bind 10.0.0.5:19132 104.219.6.162:19132
+```
+
+Change the version displayed on the server list:
+
+```bash
+$ ./phantom-<os> -version 1.1.0 104.219.6.162:19132
+```
+
+Change the name of the server displayed on the server list:
+
+```bash
+$ ./phantom-<os> -name "My Bedrock Server" 104.219.6.162:19132
+```
+
+Change the number of users displayed on the server listing:
+
+```bash
+$ ./phantom-<os> -users 100 104.219.6.162:19132
 ```
 
 ## Building
