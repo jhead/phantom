@@ -5,22 +5,34 @@ OUT=bin/phantom.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 b
 build: prep ${OUT}
 
 bin/phantom.exe:
-	GOOS=windows GOARCH=amd64 go build -o bin/phantom.exe cmd/proxy.go
+	@pushd cmd && \
+	cmd GOOS=windows GOARCH=amd64 go build -o ../bin/phantom.exe proxy.go && \
+	popd
 
 bin/phantom-macos:
-	GOOS=darwin GOARCH=amd64 go build -o bin/phantom-macos cmd/proxy.go
+	@pushd cmd && \
+	GOOS=darwin GOARCH=amd64 go build -o ../bin/phantom-macos proxy.go && \
+	popd
 
 bin/phantom-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/phantom-linux cmd/proxy.go
+	@pushd cmd && \
+	GOOS=linux GOARCH=amd64 go build -o ../bin/phantom-linux proxy.go && \
+	@popd
 
 bin/phantom-linux-arm5:
-	GOOS=linux GOARCH=arm GOARM=5 go build -o bin/phantom-linux-arm5 cmd/proxy.go
+	@pushd cmd && \
+	GOOS=linux GOARCH=arm GOARM=5 go build -o ../bin/phantom-linux-arm5 proxy.go && \
+	@popd
 
 bin/phantom-linux-arm6:
-	GOOS=linux GOARCH=arm GOARM=6 go build -o bin/phantom-linux-arm6 cmd/proxy.go
+	@pushd cmd && \
+	GOOS=linux GOARCH=arm GOARM=6 go build -o ../bin/phantom-linux-arm6 proxy.go && \
+	@popd
 
 bin/phantom-linux-arm7:
-	GOOS=linux GOARCH=arm GOARM=7 go build -o bin/phantom-linux-arm7 cmd/proxy.go
+	@pushd cmd && \
+	GOOS=linux GOARCH=arm GOARM=7 go build -o ../bin/phantom-linux-arm7 proxy.go && \
+	@popd
 
 prep:
 	mkdir -p bin

@@ -13,7 +13,7 @@ var bindAddressString string
 var serverAddressString string
 
 func main() {
-	bindArg := flag.String("bind", "0.0.0.0:19132", "IP address and port to listen on")
+	bindArg := flag.String("bind", "0.0.0.0", "IP address to listen on, port is randomized")
 	serverArg := flag.String("server", "", "Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
 	timeoutArg := flag.Int("timeout", 60, "Seconds to wait before cleaning up a disconnected client")
 
