@@ -4,6 +4,8 @@ Makes hosted Bedrock/MCPE servers show up as LAN servers, specifically for Xbox.
 
 You can now play on remote servers (not Realms!) on your Xbox with friends.
 
+It's like having a LAN server that's not actually there, spooky.
+
 ## Installing
 
 phantom is a command line application with no GUI (yet). See the usage section below.
@@ -22,15 +24,42 @@ Just replace `<os>` with macos, linux, etc. for the correct OS you're using.
 
 ## Usage
 
-Open up a command prompt (Windows) or terminal (macOS & Linux) to the location where you downloaded it.
+Open up a command prompt (Windows) or terminal (macOS & Linux) to the location
+where you downloaded it, then the server should show up on your LAN list within
+a few seconds. If not, you did something wrong. Or I did ;)
 
-```bash
-Usage: ./phantom-<os> <server-ip>
+```
+Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
   -bind string
-    	Bind address and port (default "0.0.0.0:19132")
+    	IP address to listen on, port is randomized (default "0.0.0.0")
+  -server string
+    	Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
+  -timeout int
+    	Seconds to wait before cleaning up a disconnected client (default 60)
 ```
+
+**Running multiple instances**
+
+If you have multiple Bedrock servers, you can run phantom multiple times on
+the same device to allow all of your servers to show up on the LAN list. All
+you have to do is start one instance of phantom for each server and set the
+`-server` flag appropriately. You don't need to use `-bind` or change the port.
+But you probably do need to make sure you have a firewall rule that allows
+all UDP traffic for the phantom executable.
+
+**A note on `-bind`:**
+
+The port is randomized and specifically omitted from the flag because the
+port that phantom runs on is irrelevant to the user. phantom must bind to
+port 19132 on all interfaces (or at least the broadcast address) to receive
+ping packets from LAN devices. So phantom will always do that and there's no
+way to configure otherwise, but you can also pick which IP you want the proxy
+itself to listen on, just in case you need that. You shouldn't though.
+
+As long as the device you run phantom from is on the same LAN, the default
+settings should allow other LAN devices to see it when you open Minecraft.
 
 **Example**
 
@@ -80,4 +109,4 @@ computer, a VM, or even with a Minecraft hosting service.
 
 Note that you almost definitely need to create a firewall rule for this to work.
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
-your Windows Firewall settings and open up port 19132 (UDP).
+your Windows Firewall settings and open up all UDP ports for phantom.
