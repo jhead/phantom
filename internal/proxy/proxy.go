@@ -1,4 +1,4 @@
-package proxy // import github.com/jhead/phantom/internal/proxy
+package proxy
 
 import (
 	"fmt"
@@ -6,7 +6,10 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/jhead/phantom/internal/proto"
 
 	reuse "github.com/libp2p/go-reuseport"
 )
@@ -230,12 +233,33 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 	for !proxy.dead {
 		read, _, err := remoteConn.ReadFrom(buffer)
 
+		// Read error
 		if err != nil {
 			fmt.Println(err)
 			break
 		}
 
+		// Empty read
+		if read < 1 {
+			continue
+		}
+
+		// Resize data to byte count from 'read'
 		data := buffer[:read]
+
+		// Rewrite Unconnected Reply packets
+		if packetID := data[0]; packetID == proto.UnconnectedReplyID {
+			if packet, err := proto.ReadUnconnectedReply(data); err == nil {
+				// Rewrite server MOTD to remove ports
+				truncServerName := strings.Split(packet.ServerName, ";")[:9]
+				packet.ServerName = fmt.Sprintf("%v;", strings.Join(truncServerName, ";"))
+				packetBuffer := packet.Build()
+				data = packetBuffer.Bytes()
+			} else {
+				fmt.Printf("Failed to rewrite pong: %v\n", err)
+			}
+		}
+
 		proxy.server.WriteTo(data, client)
 	}
 }
