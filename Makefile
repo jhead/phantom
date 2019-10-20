@@ -1,12 +1,17 @@
 .PHONY: prep
 
-OUT=bin/phantom.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7
+OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7
 
 build: prep ${OUT}
 
-bin/phantom.exe:
+bin/phantom-windows.exe:
 	pushd cmd && \
-	GOOS=windows GOARCH=amd64 go build -o ../bin/phantom.exe proxy.go && \
+	GOOS=windows GOARCH=amd64 go build -o ../bin/phantom-windows.exe proxy.go && \
+	popd
+
+bin/phantom-windows-32bit.exe:
+	pushd cmd && \
+	GOOS=windows GOARCH=386 go build -o ../bin/phantom-windows-32bit.exe proxy.go && \
 	popd
 
 bin/phantom-macos:
