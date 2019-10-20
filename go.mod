@@ -1,4 +1,4 @@
-module github.com/jhead/phantom/internal/proxy
+module github.com/jhead/phantom
 
 go 1.12
 
