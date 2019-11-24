@@ -1,3 +1,5 @@
+[![Downloads](https://img.shields.io/github/downloads/jhead/phantom/total)](https://github.com/jhead/phantom/releases) [![Gitter](https://badges.gitter.im/phantom-minecraft/community.svg)](https://gitter.im/phantom-minecraft/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
+
 # phantom
 
 Makes hosted Bedrock/MCPE servers show up as LAN servers, specifically for Xbox.
