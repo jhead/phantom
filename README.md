@@ -2,9 +2,9 @@
 
 # phantom
 
-Makes hosted Bedrock/MCPE servers show up as LAN servers, specifically for Xbox.
+Makes hosted Bedrock/MCPE servers show up as LAN servers, specifically for consoles.
 
-You can now play on remote servers (not Realms!) on your Xbox with friends.
+You can now play on remote servers (not Realms!) on your Xbox and PS4 with friends.
 
 It's like having a LAN server that's not actually there, spooky.
 
@@ -106,8 +106,8 @@ computer, a VM, or even with a Minecraft hosting service.
 
 - This tool should work on Windows, macOS, and Linux.
 - ARM builds are available for Raspberry Pi and similar SOCs.
-- Only Minecraft for Windows 10, iOS/Android, and Xbox are currently supported.
-- **PS4 and Nintendo Switch are not supported.**
+- Minecraft for Windows 10, iOS/Android, Xbox One, and PS4 are currently supported.
+- **Nintendo Switch is not supported.**
 
 Note that you almost definitely need to create a firewall rule for this to work.
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
