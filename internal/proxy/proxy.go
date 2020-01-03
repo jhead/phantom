@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"sync"
 
 	"github.com/jhead/phantom/internal/proto"
 
@@ -29,6 +30,7 @@ type ProxyServer struct {
 	server              *net.UDPConn
 	clients             clientMap
 	idleMap             idleMap
+	idleMux             *sync.Mutex
 	lookupChan          chan connLookup
 	dead                bool
 	prefs               ProxyPrefs
@@ -72,6 +74,7 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		nil,
 		make(clientMap),
 		make(idleMap),
+		&sync.Mutex{},
 		make(chan connLookup),
 		false,
 		prefs,
@@ -193,7 +196,9 @@ func getServerConnection(proxy *ProxyServer, client net.Addr) (*net.UDPConn, err
 	key := client.String()
 
 	// Store time for cleanup later
+	proxy.idleMux.Lock()
 	proxy.idleMap[key] = time.Now()
+	proxy.idleMux.Unlock()
 
 	// Connection exists
 	if conn, ok := proxy.clients[key]; ok {
@@ -270,6 +275,7 @@ func (proxy *ProxyServer) idleConnectionCleanup() {
 	for !proxy.dead {
 		currentTime := time.Now()
 
+		proxy.idleMux.Lock()
 		for key, lastActive := range proxy.idleMap {
 			if lastActive.Add(proxy.prefs.IdleTimeout).Before(currentTime) {
 				logger.Printf("Cleaning up idle connection: %s", key)
@@ -278,6 +284,7 @@ func (proxy *ProxyServer) idleConnectionCleanup() {
 				delete(proxy.idleMap, key)
 			}
 		}
+		proxy.idleMux.Unlock()
 
 		time.Sleep(idleCheckInterval)
 	}
