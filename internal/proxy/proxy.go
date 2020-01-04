@@ -52,14 +52,16 @@ type connResponse struct {
 }
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
+	bindPort := prefs.BindPort
 
-	port := prefs.BindPort
-	if port == 0 {
+	// Randomize port if not provided
+	if bindPort == 0 {
 		randSource := rand.NewSource(time.Now().UnixNano())
-		port = (uint16(randSource.Int63()) % 14000) + 50000
+		bindPort = (uint16(randSource.Int63()) % 14000) + 50000
 	}
 
-	prefs.BindAddress = fmt.Sprintf("%s:%d", prefs.BindAddress, port)
+	// Format full bind address with port
+	prefs.BindAddress = fmt.Sprintf("%s:%d", prefs.BindAddress, bindPort)
 
 	bindAddress, err := net.ResolveUDPAddr("udp", prefs.BindAddress)
 	if err != nil {
