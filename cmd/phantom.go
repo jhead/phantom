@@ -63,6 +63,8 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+// Watches for CTRL + C signals and shuts down the server
+// A second CTRL + C will force it to exit immediately
 func watchForInterrupt(proxyServer *proxy.ProxyServer) {
 	signalChan := make(chan os.Signal, 1)
 

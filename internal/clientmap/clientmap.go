@@ -6,13 +6,17 @@ import (
 	"time"
 
 	"github.com/jhead/phantom/internal/logging"
+	"github.com/tevino/abool"
 )
 
+// ClientMap provides a goroutine-safe map of UDP connections
+// to a remote address keyed by the client address, with a built-in
+// idle TTL that closes and removes entries that remain idle beyond it.
 type ClientMap struct {
 	IdleTimeout       time.Duration
 	IdleCheckInterval time.Duration
 	clients           map[string]clientEntry
-	dead              bool
+	dead              *abool.AtomicBool
 	mutex             *sync.RWMutex
 }
 
@@ -30,7 +34,7 @@ func New(idleTimeout time.Duration, idleCheckInterval time.Duration) *ClientMap 
 		idleTimeout,
 		idleCheckInterval,
 		make(map[string]clientEntry),
-		false,
+		abool.New(),
 		&sync.RWMutex{},
 	}
 
@@ -40,8 +44,14 @@ func New(idleTimeout time.Duration, idleCheckInterval time.Duration) *ClientMap 
 	return &clientMap
 }
 
+// Close cleans up all clients
 func (cm *ClientMap) Close() {
-	cm.dead = true
+	if cm.dead.IsSet() {
+		return
+	}
+
+	// Stop loop in goroutine
+	cm.dead.Set()
 
 	cm.mutex.RLock()
 	for _, client := range cm.clients {
@@ -50,13 +60,15 @@ func (cm *ClientMap) Close() {
 	cm.mutex.RUnlock()
 }
 
+// Cleans up clients and remote connections that have not been used in a while.
+// Blocks until the ClientMap has been closed.
 func (cm *ClientMap) idleCleanupLoop() {
 	logger.Println("Starting idle connection handler")
 
 	// Loop forever using a channel that emits every IdleCheckInterval
 	for currentTime := range time.Tick(cm.IdleCheckInterval) {
 		// Stop the idle cleanup goroutine if the proxy stopped
-		if cm.dead {
+		if cm.dead.IsSet() {
 			break
 		}
 
@@ -72,10 +84,11 @@ func (cm *ClientMap) idleCleanupLoop() {
 	}
 }
 
-// Get gets or creates a new UDP connection to the remote server
-// and stores it in a map, matching clients to remote server connections.
-// This way, we keep one UDP connection open to the server for each Minecraft
-// client that's connected to the proxy.
+// Get gets or creates a new UDP connection to the remote server and stores it
+// in a map, matching clients to remote server connections. This way, we keep one
+// UDP connection open to the server for each client. The handler parameter is
+// invoked when a new connection needs to be created (for a new client) to defer
+// that behavior to the caller.
 func (cm *ClientMap) Get(
 	clientAddr net.Addr,
 	remote *net.UDPAddr,
@@ -114,6 +127,7 @@ func (cm *ClientMap) Get(
 	return newServerConn, nil
 }
 
+// Creates a UDP connection to the remote address
 func newServerConnection(remote *net.UDPAddr) (*net.UDPConn, error) {
 	logger.Printf("Opening connection to %s\n", remote)
 

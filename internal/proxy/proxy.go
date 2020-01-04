@@ -115,6 +115,8 @@ func (proxy *ProxyServer) Close() {
 	proxy.dead.Set()
 }
 
+// Continually reads data from the provided listener and passes it to
+// processDataFromClients until the ProxyServer has been closed.
 func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	packetBuffer := make([]byte, maxMTU)
 
@@ -128,6 +130,12 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	logger.Printf("Listener shut down: %s\n", listener.LocalAddr())
 }
 
+// Inspects an incoming UDP packet, looking up the client in our connection
+// map, lazily creating a new connection to the remote server when necessary,
+// then forwarding the data to that remote connection.
+//
+// When a new client connects, an additional goroutine is created to read
+// data from the server and send it back to the client.
 func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packetBuffer []byte) error {
 	read, client, _ := listener.ReadFrom(packetBuffer)
 	if read <= 0 {
@@ -156,8 +164,8 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	return err
 }
 
-// processDataFromServer proxies packets sent by the server to us for a specific
-// Minecraft client back to that client's UDP connection.
+// Proxies packets sent by the server to us for a specific Minecraft client back to
+// that client's UDP connection.
 func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client net.Addr) {
 	buffer := make([]byte, maxMTU)
 
