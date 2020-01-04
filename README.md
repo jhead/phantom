@@ -35,11 +35,14 @@ Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
   -bind string
-    	IP address to listen on, port is randomized (default "0.0.0.0")
+    	Optional: IP address to listen on. Defaults to all interfaces. (default "0.0.0.0")
+  -bind_port int
+    	Optional: Port to listen on. Defaults to 0, which selects a random port.
+    	Note that phantom always binds to port 19132 as well, so both ports need to be open.
   -server string
-    	Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
+    	Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
   -timeout int
-    	Seconds to wait before cleaning up a disconnected client (default 60)
+    	Optional: Seconds to wait before cleaning up a disconnected client (default 60)
 ```
 
 **Running multiple instances**
@@ -53,8 +56,8 @@ all UDP traffic for the phantom executable.
 
 **A note on `-bind`:**
 
-The port is randomized and specifically omitted from the flag because the
-port that phantom runs on is irrelevant to the user. phantom must bind to
+The port is randomized by default and specifically omitted from the flag because
+the port that phantom runs on is irrelevant to the user. phantom must bind to
 port 19132 on all interfaces (or at least the broadcast address) to receive
 ping packets from LAN devices. So phantom will always do that and there's no
 way to configure otherwise, but you can also pick which IP you want the proxy
@@ -63,18 +66,40 @@ itself to listen on, just in case you need that. You shouldn't though.
 As long as the device you run phantom from is on the same LAN, the default
 settings should allow other LAN devices to see it when you open Minecraft.
 
+**A note on `-bind_port`:**
+
+The port used by the proxy server can be defined with the `-bind_port` flag.
+It can be useful if you are behind a firewall or using Docker and want to open only
+necessary ports to phantom. Note that you'll always need to open port 19132 in addition
+to the bind port for phantom to work.
+
+This flag can be used with or without the `-bind` flag. 
+Default value is 0, which means a random port will be used.
+
 **Example**
 
-Connect to a server at IP `104.219.6.162` port `19132`:
+Connect to a server at IP `lax.mcbr.cubed.host` port `19132`:
 
 ```bash
-$ ./phantom-<os> 104.219.6.162:19132
+$ ./phantom-<os> -server lax.mcbr.cubed.host:19132
 ```
 
 Same as above but bind to a specific local IP:
 
 ```bash
-$ ./phantom-<os> -bind 10.0.0.5:19132 104.219.6.162:19132
+$ ./phantom-<os> -bind 10.0.0.5 -server lax.mcbr.cubed.host:19132
+```
+
+Same as above but bind the proxy server to port 19133:
+   
+```bash
+$ ./phantom-<os> -bind_port 19133 -server lax.mcbr.cubed.host:19132
+```
+
+Same as above but bind the proxy server to local IP 10.0.0.5 and port 19133:
+   
+```bash
+$ ./phantom-<os> -bind 10.0.0.5 -bind_port 19133 -server lax.mcbr.cubed.host:19132
 ```
 
 ## Building

@@ -36,6 +36,7 @@ type ProxyServer struct {
 
 type ProxyPrefs struct {
 	BindAddress  string
+	BindPort     uint16
 	RemoteServer string
 	IdleTimeout  time.Duration
 }
@@ -51,9 +52,16 @@ type connResponse struct {
 }
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
-	randSource := rand.NewSource(time.Now().UnixNano())
-	randomPort := (uint16(randSource.Int63()) % 14000) + 50000
-	prefs.BindAddress = fmt.Sprintf("%s:%d", prefs.BindAddress, randomPort)
+	bindPort := prefs.BindPort
+
+	// Randomize port if not provided
+	if bindPort == 0 {
+		randSource := rand.NewSource(time.Now().UnixNano())
+		bindPort = (uint16(randSource.Int63()) % 14000) + 50000
+	}
+
+	// Format full bind address with port
+	prefs.BindAddress = fmt.Sprintf("%s:%d", prefs.BindAddress, bindPort)
 
 	bindAddress, err := net.ResolveUDPAddr("udp", prefs.BindAddress)
 	if err != nil {

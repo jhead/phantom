@@ -11,11 +11,16 @@ import (
 
 var bindAddressString string
 var serverAddressString string
+var bindPortInt uint16
 
 func main() {
-	bindArg := flag.String("bind", "0.0.0.0", "IP address to listen on, port is randomized")
-	serverArg := flag.String("server", "", "Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
-	timeoutArg := flag.Int("timeout", 60, "Seconds to wait before cleaning up a disconnected client")
+	// Required
+	serverArg := flag.String("server", "", "Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
+
+	// Optional
+	bindArg := flag.String("bind", "0.0.0.0", "Optional: IP address to listen on. Defaults to all interfaces.")
+	bindPortArg := flag.Int("bind_port", 0, "Optional: Port to listen on. Defaults to 0, which selects a random port.\nNote that phantom always binds to port 19132 as well, so both ports need to be open.")
+	timeoutArg := flag.Int("timeout", 60, "Optional: Seconds to wait before cleaning up a disconnected client")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -28,11 +33,13 @@ func main() {
 	bindAddressString = *bindArg
 	serverAddressString = *serverArg
 	idleTimeout := time.Duration(*timeoutArg) * time.Second
+	bindPortInt = uint16(*bindPortArg)
 
 	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
 
 	proxyServer, err := proxy.New(proxy.ProxyPrefs{
 		bindAddressString,
+		bindPortInt,
 		serverAddressString,
 		idleTimeout,
 	})
