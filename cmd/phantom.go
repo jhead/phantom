@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/jhead/phantom/internal/proxy"
@@ -49,6 +50,9 @@ func main() {
 		return
 	}
 
+	// Watch for CTRL + C
+	watchForInterrupt(proxyServer)
+
 	if err := proxyServer.Start(); err != nil {
 		fmt.Printf("Failed to start server: %s\n", err)
 	}
@@ -57,4 +61,26 @@ func main() {
 func usage() {
 	fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] -server <server-ip>\n\nOptions:\n", os.Args[0])
 	flag.PrintDefaults()
+}
+
+func watchForInterrupt(proxyServer *proxy.ProxyServer) {
+	signalChan := make(chan os.Signal, 1)
+
+	signal.Notify(signalChan, os.Interrupt)
+
+	go func() {
+		once := false
+
+		for range signalChan {
+			if once {
+				fmt.Println("\nForce quitting")
+				os.Exit(2)
+			}
+
+			fmt.Println("\nPress CTRL + C again to force quit")
+
+			once = true
+			proxyServer.Close()
+		}
+	}()
 }
