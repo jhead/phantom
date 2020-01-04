@@ -35,13 +35,14 @@ Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
   -bind string
-    	IP address to listen on, port is randomized by default - see: bind_port (default "0.0.0.0")
+    	Optional: IP address to listen on. Defaults to all interfaces. (default "0.0.0.0")
   -bind_port int
-    	Port to listen on - 0 means a random port will be used (default 0)
+    	Optional: Port to listen on. Defaults to 0, which selects a random port.
+    	Note that phantom always binds to port 19132 as well, so both ports need to be open.
   -server string
-    	Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
+    	Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
   -timeout int
-    	Seconds to wait before cleaning up a disconnected client (default 60)
+    	Optional: Seconds to wait before cleaning up a disconnected client (default 60)
 ```
 
 **Running multiple instances**
