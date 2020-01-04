@@ -77,29 +77,30 @@ Default value is 0, which means a random port will be used.
 
 **Example**
 
-Connect to a server at IP `104.219.6.162` port `19132`:
+Connect to a server at IP `lax.mcbr.cubed.host` port `19132`:
 
 ```bash
-$ ./phantom-<os> 104.219.6.162:19132
+$ ./phantom-<os> -server lax.mcbr.cubed.host:19132
 ```
 
 Same as above but bind to a specific local IP:
 
 ```bash
-$ ./phantom-<os> -bind 10.0.0.5 104.219.6.162:19132
+$ ./phantom-<os> -bind 10.0.0.5 -server lax.mcbr.cubed.host:19132
 ```
 
-Same as above but bind to a specific local proxy port:
+Same as above but bind the proxy server to port 19133:
    
-   ```bash
-   $ ./phantom-<os> -bind_port 54321 104.219.6.162:19132
-   ```
+```bash
+$ ./phantom-<os> -bind_port 19133 -server lax.mcbr.cubed.host:19132
+```
 
-Same as above but bind to a specific local IP and port:
+Same as above but bind the proxy server to local IP 10.0.0.5 and port 19133:
    
-   ```bash
-   $ ./phantom-<os> -bind 10.0.0.5 -bind_port 54321 104.219.6.162:19132
-   ```
+```bash
+$ ./phantom-<os> -bind 10.0.0.5 -bind_port 19133 -server lax.mcbr.cubed.host:19132
+```
+
 ## Building
 
 Makefile builds for Windows, macOS, and Linux, including x86 and ARM.
