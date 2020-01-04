@@ -29,6 +29,7 @@ type ProxyServer struct {
 	pingServer          net.PacketConn
 	server              *net.UDPConn
 	clients             clientMap
+	clientsMux          *sync.RWMutex
 	idleMap             idleMap
 	idleMux             *sync.Mutex
 	lookupChan          chan connLookup
@@ -73,6 +74,7 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		nil,
 		nil,
 		make(clientMap),
+		&sync.RWMutex{},
 		make(idleMap),
 		&sync.Mutex{},
 		make(chan connLookup),
@@ -128,9 +130,11 @@ func (proxy *ProxyServer) Stop() {
 	proxy.server.Close()
 
 	// Close all connections
+	proxy.clientsMux.Lock()
 	for _, conn := range proxy.clients {
 		conn.Close()
 	}
+	proxy.clientsMux.Unlock()
 
 	// Stop loops
 	proxy.dead = true
@@ -201,9 +205,12 @@ func getServerConnection(proxy *ProxyServer, client net.Addr) (*net.UDPConn, err
 	proxy.idleMux.Unlock()
 
 	// Connection exists
+	proxy.clientsMux.RLock()
 	if conn, ok := proxy.clients[key]; ok {
+		proxy.clientsMux.RUnlock()
 		return conn, nil
 	}
+	proxy.clientsMux.RUnlock()
 
 	// New connection needed
 	logger.Printf("Opening connection to %s for new client %s!\n", proxy.remoteServerAddress, client)
@@ -212,7 +219,9 @@ func getServerConnection(proxy *ProxyServer, client net.Addr) (*net.UDPConn, err
 		return nil, err
 	}
 
+	proxy.clientsMux.Lock()
 	proxy.clients[key] = conn
+	proxy.clientsMux.Unlock()
 
 	// Launch goroutine to pass packets from server to client
 	go proxy.processDataFromServer(conn, client)
@@ -279,9 +288,11 @@ func (proxy *ProxyServer) idleConnectionCleanup() {
 		for key, lastActive := range proxy.idleMap {
 			if lastActive.Add(proxy.prefs.IdleTimeout).Before(currentTime) {
 				logger.Printf("Cleaning up idle connection: %s", key)
+				proxy.clientsMux.Lock()
 				proxy.clients[key].Close()
 				delete(proxy.clients, key)
 				delete(proxy.idleMap, key)
+				proxy.clientsMux.Unlock()
 			}
 		}
 		proxy.idleMux.Unlock()
