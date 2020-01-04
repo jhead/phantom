@@ -35,7 +35,9 @@ Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
   -bind string
-    	IP address to listen on, port is randomized (default "0.0.0.0")
+    	IP address to listen on, port is randomized by default - see: bind_port (default "0.0.0.0")
+  -bind_port int
+    	Port to listen on - 0 means a random port will be used (default 0)
   -server string
     	Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
   -timeout int
@@ -53,8 +55,8 @@ all UDP traffic for the phantom executable.
 
 **A note on `-bind`:**
 
-The port is randomized and specifically omitted from the flag because the
-port that phantom runs on is irrelevant to the user. phantom must bind to
+The port is randomized by default and specifically omitted from the flag because
+the port that phantom runs on is irrelevant to the user. phantom must bind to
 port 19132 on all interfaces (or at least the broadcast address) to receive
 ping packets from LAN devices. So phantom will always do that and there's no
 way to configure otherwise, but you can also pick which IP you want the proxy
@@ -62,6 +64,13 @@ itself to listen on, just in case you need that. You shouldn't though.
 
 As long as the device you run phantom from is on the same LAN, the default
 settings should allow other LAN devices to see it when you open Minecraft.
+
+**A note on `-bind_port`:**
+
+The port used by proxy can be defined with this flag. It can be useful if you are
+behind a firewall and want to open only necessary ports to phantom.
+This flag can be used with or without the `-bind` flag. 
+Default value is 0. 0 means a random port will be used. 
 
 **Example**
 
@@ -74,9 +83,20 @@ $ ./phantom-<os> 104.219.6.162:19132
 Same as above but bind to a specific local IP:
 
 ```bash
-$ ./phantom-<os> -bind 10.0.0.5:19132 104.219.6.162:19132
+$ ./phantom-<os> -bind 10.0.0.5 104.219.6.162:19132
 ```
 
+Same as above but bind to a specific local proxy port:
+   
+   ```bash
+   $ ./phantom-<os> -bind_port 54321 104.219.6.162:19132
+   ```
+
+Same as above but bind to a specific local IP and port:
+   
+   ```bash
+   $ ./phantom-<os> -bind 10.0.0.5 -bind_port 54321 104.219.6.162:19132
+   ```
 ## Building
 
 Makefile builds for Windows, macOS, and Linux, including x86 and ARM.
