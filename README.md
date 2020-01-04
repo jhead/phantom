@@ -67,10 +67,12 @@ settings should allow other LAN devices to see it when you open Minecraft.
 
 **A note on `-bind_port`:**
 
-The port used by proxy can be defined with this flag. It can be useful if you are
-behind a firewall and want to open only necessary ports to phantom.
+The port used by proxy can be defined with the `-bind_port` flag. It can be useful if
+you are behind a firewall and want to open only necessary ports to phantom. Note that
+you'll always need to open port 19132 in addition to the bind port for phantom to work.
+
 This flag can be used with or without the `-bind` flag. 
-Default value is 0. 0 means a random port will be used. 
+Default value is 0, which means a random port will be used.
 
 **Example**
 
