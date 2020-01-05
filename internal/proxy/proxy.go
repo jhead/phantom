@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/jhead/phantom/internal/proto"
@@ -259,8 +258,6 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 		if packetID := data[0]; packetID == proto.UnconnectedReplyID {
 			if packet, err := proto.ReadUnconnectedReply(data); err == nil {
 				// Rewrite server MOTD to remove ports
-				truncServerName := strings.Split(packet.ServerName, ";")[:9]
-				packet.ServerName = fmt.Sprintf("%v;", strings.Join(truncServerName, ";"))
 				packetBuffer := packet.Build()
 				data = packetBuffer.Bytes()
 			} else {
