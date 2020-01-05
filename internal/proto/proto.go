@@ -93,6 +93,7 @@ func (r UnconnectedReply) Build() bytes.Buffer {
 	return outBuffer
 }
 
+// Reads pong data from the string off the wire into an empty PongData struct
 func readPong(raw string) PongData {
 	pong := PongData{}
 	pongParts := []interface{}{}
@@ -108,6 +109,8 @@ func readPong(raw string) PongData {
 	return pong
 }
 
+// Turns a PongData into a string that complies with the Bedrock protocol,
+// separating the fields with ;
 func writePong(pong PongData) string {
 	var pongDataFields []string
 	pongDataFieldsRaw := util.MapStructToFields(&pong)
