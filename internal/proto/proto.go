@@ -3,15 +3,35 @@ package proto
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"strings"
+
+	"github.com/jhead/phantom/internal/util"
 )
 
 var UnconnectedReplyID byte = 0x1C
 
 type UnconnectedReply struct {
-	PingTime   []byte
-	ID         []byte
-	Magic      []byte
-	ServerName string
+	PingTime []byte
+	ID       []byte
+	Magic    []byte
+	Pong     PongData
+}
+
+type PongData struct {
+	Edition         string
+	MOTD            string
+	ProtocolVersion string
+	Version         string
+	Players         string
+	MaxPlayers      string
+	ServerID        string
+	SubMOTD         string
+	GameType        string
+	NintendoLimited string
+	// Specifically omit these two because they cause issues
+	// Port4           string
+	// Port6           string
 }
 
 func ReadUnconnectedReply(in []byte) (reply *UnconnectedReply, err error) {
@@ -36,19 +56,19 @@ func ReadUnconnectedReply(in []byte) (reply *UnconnectedReply, err error) {
 		return nil, err
 	}
 
-	serverNameLenBytes := make([]byte, 2)
-	if _, err := buf.Read(serverNameLenBytes); err != nil {
+	pongLenBytes := make([]byte, 2)
+	if _, err := buf.Read(pongLenBytes); err != nil {
 		return nil, err
 	}
 
-	serverNameLen := binary.BigEndian.Uint16(serverNameLenBytes)
+	pongLen := binary.BigEndian.Uint16(pongLenBytes)
 
-	serverNameBytes := make([]byte, serverNameLen)
-	if _, err := buf.Read(serverNameBytes); err != nil {
+	pongDataBytes := make([]byte, pongLen)
+	if _, err := buf.Read(pongDataBytes); err != nil {
 		return nil, err
 	}
 
-	reply.ServerName = string(serverNameBytes)
+	reply.Pong = readPong(string(pongDataBytes))
 
 	return
 }
@@ -61,12 +81,39 @@ func (r UnconnectedReply) Build() bytes.Buffer {
 	outBuffer.Write(r.ID)
 	outBuffer.Write(r.Magic)
 
-	serverNameLen := uint16(len(r.ServerName))
+	pongDataString := writePong(r.Pong)
+	pongDataLen := len(pongDataString)
+
 	stringBuf := make([]byte, 2)
-	binary.BigEndian.PutUint16(stringBuf, serverNameLen)
+	binary.BigEndian.PutUint16(stringBuf, uint16(pongDataLen))
 
 	outBuffer.Write(stringBuf)
-	outBuffer.WriteString(r.ServerName)
+	outBuffer.WriteString(pongDataString)
 
 	return outBuffer
+}
+
+func readPong(raw string) PongData {
+	pong := PongData{}
+	pongParts := []interface{}{}
+
+	stringParts := strings.Split(raw, ";")
+	for _, val := range stringParts {
+		pongParts = append(pongParts, val)
+	}
+
+	util.MapFieldsToStruct(pongParts, &pong)
+
+	fmt.Printf("%v\n", pong)
+	return pong
+}
+
+func writePong(pong PongData) string {
+	var pongDataFields []string
+	pongDataFieldsRaw := util.MapStructToFields(&pong)
+	for _, value := range pongDataFieldsRaw {
+		pongDataFields = append(pongDataFields, fmt.Sprintf("%v", value))
+	}
+
+	return strings.Join(pongDataFields, ";")
 }
