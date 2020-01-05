@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/jhead/phantom/internal/clientmap"

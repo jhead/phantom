@@ -105,7 +105,6 @@ func readPong(raw string) PongData {
 
 	util.MapFieldsToStruct(pongParts, &pong)
 
-	fmt.Printf("%v\n", pong)
 	return pong
 }
 
