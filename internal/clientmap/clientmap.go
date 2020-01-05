@@ -15,7 +15,7 @@ import (
 type ClientMap struct {
 	IdleTimeout       time.Duration
 	IdleCheckInterval time.Duration
-	clients           map[string]clientEntry
+	clients           map[string]*clientEntry
 	dead              *abool.AtomicBool
 	mutex             *sync.RWMutex
 }
@@ -33,7 +33,7 @@ func New(idleTimeout time.Duration, idleCheckInterval time.Duration) *ClientMap 
 	clientMap := ClientMap{
 		idleTimeout,
 		idleCheckInterval,
-		make(map[string]clientEntry),
+		make(map[string]*clientEntry),
 		abool.New(),
 		&sync.RWMutex{},
 	}
@@ -97,17 +97,13 @@ func (cm *ClientMap) Get(
 	key := clientAddr.String()
 
 	// Check if connection exists
-	cm.mutex.RLock()
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
 
 	if client, ok := cm.clients[key]; ok {
-		cm.mutex.RUnlock()
 		client.lastActive = time.Now()
 		return client.conn, nil
 	}
-
-	cm.mutex.RUnlock()
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
 
 	// New connection needed
 	logger.Printf("Opening connection to %s for new client %s!\n", remote, clientAddr)
@@ -116,7 +112,7 @@ func (cm *ClientMap) Get(
 		return nil, err
 	}
 
-	cm.clients[key] = clientEntry{
+	cm.clients[key] = &clientEntry{
 		newServerConn,
 		time.Now(),
 	}
