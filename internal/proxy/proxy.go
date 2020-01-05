@@ -2,35 +2,31 @@ package proxy
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
-	"os"
 	"time"
 
+	"github.com/jhead/phantom/internal/clientmap"
+	"github.com/jhead/phantom/internal/logging"
 	"github.com/jhead/phantom/internal/proto"
+	"github.com/tevino/abool"
 
 	reuse "github.com/libp2p/go-reuseport"
 )
 
 const maxMTU = 1472
 
-var logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-var idleCheckInterval = time.Duration(5) * time.Second
-
-type clientMap map[string]*net.UDPConn
-type idleMap map[string]time.Time
+var logger = logging.Get()
+var idleCheckInterval = 5 * time.Second
 
 type ProxyServer struct {
 	bindAddress         *net.UDPAddr
 	remoteServerAddress *net.UDPAddr
 	pingServer          net.PacketConn
 	server              *net.UDPConn
-	clients             clientMap
-	idleMap             idleMap
-	lookupChan          chan connLookup
-	dead                bool
+	clientMap           *clientmap.ClientMap
 	prefs               ProxyPrefs
+	dead                *abool.AtomicBool
 }
 
 type ProxyPrefs struct {
@@ -38,16 +34,6 @@ type ProxyPrefs struct {
 	BindPort     uint16
 	RemoteServer string
 	IdleTimeout  time.Duration
-}
-
-type connLookup struct {
-	client       net.Addr
-	responseChan chan connResponse
-}
-
-type connResponse struct {
-	conn *net.UDPConn
-	err  error
 }
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
@@ -77,11 +63,9 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		remoteServerAddress,
 		nil,
 		nil,
-		make(clientMap),
-		make(idleMap),
-		make(chan connLookup),
-		false,
+		clientmap.New(prefs.IdleTimeout, idleCheckInterval),
 		prefs,
+		abool.New(),
 	}, nil
 }
 
@@ -106,16 +90,6 @@ func (proxy *ProxyServer) Start() error {
 
 	logger.Printf("Proxy server listening!")
 
-	// Close connection upon exit
-	defer proxy.server.Close()
-	defer proxy.pingServer.Close()
-
-	// Start goroutine for cleaning up idle connections
-	go proxy.idleConnectionCleanup()
-
-	// Start goroutine for concurrent client connection map access
-	go proxy.serverConnectionLookupLoop()
-
 	// Start proxying ping packets from the broadcast listener
 	go proxy.readLoop(proxy.pingServer)
 
@@ -125,34 +99,41 @@ func (proxy *ProxyServer) Start() error {
 	return nil
 }
 
-func (proxy *ProxyServer) Stop() {
+func (proxy *ProxyServer) Close() {
 	logger.Println("Stopping proxy server")
 
-	// Stop UDP listener
+	// Stop UDP listeners
 	proxy.server.Close()
+	proxy.pingServer.Close()
 
 	// Close all connections
-	for _, conn := range proxy.clients {
-		conn.Close()
-	}
+	proxy.clientMap.Close()
 
 	// Stop loops
-	proxy.dead = true
+	proxy.dead.Set()
 }
 
+// Continually reads data from the provided listener and passes it to
+// processDataFromClients until the ProxyServer has been closed.
 func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	packetBuffer := make([]byte, maxMTU)
 
-	for !proxy.dead {
+	for !proxy.dead.IsSet() {
 		err := proxy.processDataFromClients(listener, packetBuffer)
 		if err != nil {
 			logger.Printf("Error while processing client data: %s\n", err)
 		}
 	}
 
-	logger.Println("Proxy server shut down")
+	logger.Printf("Listener shut down: %s\n", listener.LocalAddr())
 }
 
+// Inspects an incoming UDP packet, looking up the client in our connection
+// map, lazily creating a new connection to the remote server when necessary,
+// then forwarding the data to that remote connection.
+//
+// When a new client connects, an additional goroutine is created to read
+// data from the server and send it back to the client.
 func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packetBuffer []byte) error {
 	read, client, _ := listener.ReadFrom(packetBuffer)
 	if read <= 0 {
@@ -161,7 +142,17 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 
 	data := packetBuffer[:read]
 
-	serverConn, err := proxy.getServerConnection(client)
+	// Handler triggered when a new client connects and we create a new connetion to the remote server
+	onNewConnection := func(newServerConn *net.UDPConn) {
+		proxy.processDataFromServer(newServerConn, client)
+	}
+
+	serverConn, err := proxy.clientMap.Get(
+		client,
+		proxy.remoteServerAddress,
+		onNewConnection,
+	)
+
 	if err != nil {
 		return err
 	}
@@ -171,73 +162,12 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	return err
 }
 
-func (proxy *ProxyServer) serverConnectionLookupLoop() {
-	for !proxy.dead {
-		lookup := <-proxy.lookupChan
-		conn, err := getServerConnection(proxy, lookup.client)
-		lookup.responseChan <- connResponse{conn, err}
-	}
-}
-
-func (proxy *ProxyServer) getServerConnection(client net.Addr) (*net.UDPConn, error) {
-	lookup := connLookup{
-		client,
-		make(chan connResponse),
-	}
-
-	proxy.lookupChan <- lookup
-
-	response := <-lookup.responseChan
-
-	return response.conn, response.err
-}
-
-// getServerConnection gets or creates a new UDP connection to the remote server
-// and stores it in a map, matching clients to remote server connections.
-// This way, we keep one UDP connection open to the server for each Minecraft
-// client that's connected to the proxy.
-func getServerConnection(proxy *ProxyServer, client net.Addr) (*net.UDPConn, error) {
-	key := client.String()
-
-	// Store time for cleanup later
-	proxy.idleMap[key] = time.Now()
-
-	// Connection exists
-	if conn, ok := proxy.clients[key]; ok {
-		return conn, nil
-	}
-
-	// New connection needed
-	logger.Printf("Opening connection to %s for new client %s!\n", proxy.remoteServerAddress, client)
-	conn, err := proxy.newServerConnection()
-	if err != nil {
-		return nil, err
-	}
-
-	proxy.clients[key] = conn
-
-	// Launch goroutine to pass packets from server to client
-	go proxy.processDataFromServer(conn, client)
-
-	return conn, nil
-}
-
-func (proxy *ProxyServer) newServerConnection() (*net.UDPConn, error) {
-	logger.Printf("Opening connection to %s\n", proxy.remoteServerAddress)
-	conn, err := net.DialUDP("udp", nil, proxy.remoteServerAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	return conn, nil
-}
-
-// processDataFromServer proxies packets sent by the server to us for a specific
-// Minecraft client back to that client's UDP connection.
+// Proxies packets sent by the server to us for a specific Minecraft client back to
+// that client's UDP connection.
 func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client net.Addr) {
 	buffer := make([]byte, maxMTU)
 
-	for !proxy.dead {
+	for !proxy.dead.IsSet() {
 		read, _, err := remoteConn.ReadFrom(buffer)
 
 		// Read error
@@ -266,24 +196,5 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 		}
 
 		proxy.server.WriteTo(data, client)
-	}
-}
-
-func (proxy *ProxyServer) idleConnectionCleanup() {
-	logger.Println("Starting idle connection handler")
-
-	for !proxy.dead {
-		currentTime := time.Now()
-
-		for key, lastActive := range proxy.idleMap {
-			if lastActive.Add(proxy.prefs.IdleTimeout).Before(currentTime) {
-				logger.Printf("Cleaning up idle connection: %s", key)
-				proxy.clients[key].Close()
-				delete(proxy.clients, key)
-				delete(proxy.idleMap, key)
-			}
-		}
-
-		time.Sleep(idleCheckInterval)
 	}
 }
