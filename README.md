@@ -16,7 +16,7 @@ phantom is a command line application with no GUI (yet). See the usage section b
 
 **macOS / Linux**
 
-Add execute persmissions if necessary:
+Add execute permissions if necessary:
 
 ```bash
 $ chmod u+x ./phantom-<os>
