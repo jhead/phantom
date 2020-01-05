@@ -1,42 +1,43 @@
 .PHONY: prep
 
 OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7
+CMDSRC=phantom.go
 
 build: prep ${OUT}
 
 bin/phantom-windows.exe:
 	pushd cmd && \
-	GOOS=windows GOARCH=amd64 go build -o ../bin/phantom-windows.exe proxy.go && \
+	GOOS=windows GOARCH=amd64 go build -o ../bin/phantom-windows.exe ${CMDSRC} && \
 	popd
 
 bin/phantom-windows-32bit.exe:
 	pushd cmd && \
-	GOOS=windows GOARCH=386 go build -o ../bin/phantom-windows-32bit.exe proxy.go && \
+	GOOS=windows GOARCH=386 go build -o ../bin/phantom-windows-32bit.exe ${CMDSRC} && \
 	popd
 
 bin/phantom-macos:
 	pushd cmd && \
-	GOOS=darwin GOARCH=amd64 go build -o ../bin/phantom-macos proxy.go && \
+	GOOS=darwin GOARCH=amd64 go build -o ../bin/phantom-macos ${CMDSRC} && \
 	popd
 
 bin/phantom-linux:
 	pushd cmd && \
-	GOOS=linux GOARCH=amd64 go build -o ../bin/phantom-linux proxy.go && \
+	GOOS=linux GOARCH=amd64 go build -o ../bin/phantom-linux ${CMDSRC} && \
 	popd
 
 bin/phantom-linux-arm5:
 	pushd cmd && \
-	GOOS=linux GOARCH=arm GOARM=5 go build -o ../bin/phantom-linux-arm5 proxy.go && \
+	GOOS=linux GOARCH=arm GOARM=5 go build -o ../bin/phantom-linux-arm5 ${CMDSRC} && \
 	popd
 
 bin/phantom-linux-arm6:
 	pushd cmd && \
-	GOOS=linux GOARCH=arm GOARM=6 go build -o ../bin/phantom-linux-arm6 proxy.go && \
+	GOOS=linux GOARCH=arm GOARM=6 go build -o ../bin/phantom-linux-arm6 ${CMDSRC} && \
 	popd
 
 bin/phantom-linux-arm7:
 	pushd cmd && \
-	GOOS=linux GOARCH=arm GOARM=7 go build -o ../bin/phantom-linux-arm7 proxy.go && \
+	GOOS=linux GOARCH=arm GOARM=7 go build -o ../bin/phantom-linux-arm7 ${CMDSRC} && \
 	popd
 
 prep:
@@ -45,3 +46,5 @@ prep:
 clean:
 	rm -rf bin
 
+test:
+	go test ./...
