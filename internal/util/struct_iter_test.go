@@ -45,6 +45,15 @@ func TestToStructWithMissing(t *testing.T) {
 	assert.Equal(t, Foo{"a", "b", ""}, foo)
 }
 
+func TestToStructWithPartialMismatch(t *testing.T) {
+	fields := []interface{}{"a", 1, "c"}
+	foo := Foo{}
+
+	MapFieldsToStruct(fields, &foo)
+
+	assert.Equal(t, Foo{"a", "", "c"}, foo)
+}
+
 func TestToFields(t *testing.T) {
 	fields := MapStructToFields(&Foo{"a", "b", "c"})
 	expected := []interface{}{"a", "b", "c"}
