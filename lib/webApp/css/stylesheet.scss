@@ -1,0 +1,57 @@
+@import 'materialize.css';
+
+$PC: #5B8499;
+$SC: #19242A;
+
+.nav-wrapper{
+	background: $PC;
+	z-index: 500;
+}
+
+nav {
+	
+	height: 70px;
+	
+	a {
+		height: 70px;
+		
+		font-weight: 500;
+	}
+
+	i {
+		padding-top:2px;
+	}
+	
+}
+
+html,body {
+	height: 100vh;
+	margin: 0;
+	background-color:#fff;
+
+}
+
+.host{
+    color:red;
+}
+
+.client{
+    color:blue;
+}
+
+#interface{
+	margin:25px 10px;
+	max-width:calc(100% - 20px);
+	height:calc(100vh - 120px);
+
+	@media only screen and (min-width : 601px) {
+		width: 600px;
+		margin:30px auto;
+		max-height:calc(100vh - 130px);
+	}
+	
+	@media only screen and (min-width : 992px) {
+		width: 900px;
+		margin:30px auto;
+	}
+}
