@@ -2,8 +2,8 @@
   "name": "phantom",
   "version": "1.0.0",
   "description": "Web App for phantom server proxy",
-  "main": "GUI.js",
-  "bin": "GUI.js",
+  "main": "phantomGUI.js",
+  "bin": "phantomGUI.js",
   "directories": {
     "lib": "lib"
   },
