@@ -22,6 +22,9 @@ html, body {
 .client {
   color: blue; }
 
+.phantom {
+  color: #4a148c; }
+
 #interface {
   margin: 25px 10px;
   max-width: calc(100% - 20px);

@@ -1,18 +1,15 @@
 {
   "name": "phantom",
   "version": "1.0.0",
-  "description": "Web App for phantom server proxy",
-  "main": "phantomGUI.js",
-  "bin": "phantomGUI.js",
+  "description": "Web App for phantom minecraft server proxy.",
+  "main": "phantom-GUI.js",
+  "bin": "phantom-GUI.js",
   "directories": {
     "lib": "lib"
   },
   "files": [
     "lib"
   ],
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OliverBrotchie/phantom.git"
@@ -31,5 +28,8 @@
     "express": "^4.17.1",
     "open": "^7.0.3",
     "pkg": "^4.4.4"
+  },
+  "pkg": {
+    "assets": "lib"
   }
 }
