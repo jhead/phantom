@@ -40,7 +40,7 @@ type ProxyPrefs struct {
 }
 
 var randSource = rand.NewSource(time.Now().UnixNano())
-var serverID = randSource.Int63()
+var serverID = uint64(randSource.Int63())
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	bindPort := prefs.BindPort
@@ -118,7 +118,8 @@ func (proxy *ProxyServer) Start() error {
 	}
 
 	log.Info().Msgf("Proxy server listening!")
-	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
+	log.Info().Msgf("Once your console pings phantom, you should see pong replies below.")
+	log.Info().Msgf("If you don't see any pongs, phantom may not be able to reach your server.")
 
 	// Start processing everything else using the proxy listener
 	proxy.readLoop(proxy.server)
@@ -194,6 +195,12 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 		log.Info().Msgf("Received LAN ping from client: %s", client.String())
 	}
 
+	// Rewrite Connection Request 2 packets
+	if packetID := data[0]; packetID == proto.ConnectionRequestTwoID {
+		data = proxy.rewriteConnectionRequestTwo(data)
+		log.Info().Msgf("Sent connection request 2 from client: %v", client.String())
+	}
+
 	// Write packet from client to server
 	_, err = serverConn.Write(data)
 	return err
@@ -242,7 +249,7 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
 
-	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
+	if packet, err := proto.ReadUnconnectedPong(data); err == nil {
 		// Overwrite the server ID with one unique to this phantom instance.
 		// If we don't do this, the client will get confused if you restart phantom.
 		packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
@@ -261,6 +268,38 @@ func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 		return packetBuffer.Bytes()
 	} else {
 		log.Warn().Msgf("Failed to rewrite pong: %v", err)
+	}
+
+	return data
+}
+
+func (proxy *ProxyServer) rewriteConnectionRequestTwo(data []byte) []byte {
+	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
+
+	if packet, err := proto.ReadConnectionRequestTwo(data); err == nil {
+		fmt.Println(packet)
+
+		remoteIP := proxy.remoteServerAddress.IP
+
+		if v4 := remoteIP.To4(); v4 != nil {
+			// v4
+			packet.Address = v4
+		} else {
+			// v6
+			packet.Address = remoteIP
+		}
+
+		for key, byt := range packet.Address {
+			fmt.Println(byt)
+			fmt.Println(byt ^ 0xff)
+			packet.Address[key] = byt ^ 0xff
+		}
+
+		packet.Port = uint16(proxy.remoteServerAddress.Port)
+
+		packetBuffer := packet.Build()
+		log.Debug().Msgf("Connection Request 2: %v", packet)
+		return packetBuffer.Bytes()
 	}
 
 	return data
