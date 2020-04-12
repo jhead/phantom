@@ -10,9 +10,10 @@ import (
 	"github.com/jhead/phantom/internal/util"
 )
 
-var UnconnectedReplyID byte = 0x1C
+var UnconnectedPingID byte = 0x01
+var UnconnectedPongID byte = 0x1C
 
-type UnconnectedReply struct {
+type UnconnectedPing struct {
 	PingTime []byte
 	ID       []byte
 	Magic    []byte
@@ -36,8 +37,8 @@ type PongData struct {
 
 var dupeSemicolonRegex = regexp.MustCompile(";{2,}$")
 
-func ReadUnconnectedReply(in []byte) (reply *UnconnectedReply, err error) {
-	reply = &UnconnectedReply{}
+func ReadUnconnectedPing(in []byte) (reply *UnconnectedPing, err error) {
+	reply = &UnconnectedPing{}
 	buf := bytes.NewBuffer(in)
 
 	// Packet ID
@@ -75,10 +76,10 @@ func ReadUnconnectedReply(in []byte) (reply *UnconnectedReply, err error) {
 	return
 }
 
-func (r UnconnectedReply) Build() bytes.Buffer {
+func (r UnconnectedPing) Build() bytes.Buffer {
 	var outBuffer bytes.Buffer
 
-	outBuffer.WriteByte(UnconnectedReplyID)
+	outBuffer.WriteByte(UnconnectedPongID)
 	outBuffer.Write(r.PingTime)
 	outBuffer.Write(r.ID)
 	outBuffer.Write(r.Magic)

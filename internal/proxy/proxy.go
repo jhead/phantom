@@ -118,6 +118,7 @@ func (proxy *ProxyServer) Start() error {
 	}
 
 	log.Info().Msgf("Proxy server listening!")
+	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
 
 	// Start processing everything else using the proxy listener
 	proxy.readLoop(proxy.server)
@@ -151,7 +152,7 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	for !proxy.dead.IsSet() {
 		err := proxy.processDataFromClients(listener, packetBuffer)
 		if err != nil {
-			log.Info().Msgf("Error while processing client data: %s", err)
+			log.Warn().Msgf("Error while processing client data: %s", err)
 		}
 	}
 
@@ -189,6 +190,10 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 		return err
 	}
 
+	if packetID := data[0]; packetID == proto.UnconnectedPingID {
+		log.Info().Msgf("Received LAN ping from client: %s", client.String())
+	}
+
 	// Write packet from client to server
 	_, err = serverConn.Write(data)
 	return err
@@ -217,34 +222,39 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 		data := buffer[:read]
 		log.Trace().Msgf("server recv: %v", data)
 
-		// Rewrite Unconnected Reply packets
-		if packetID := data[0]; packetID == proto.UnconnectedReplyID {
-			log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
-
-			if packet, err := proto.ReadUnconnectedReply(data); err == nil {
-				// Overwrite the server ID with one unique to this phantom instance.
-				// If we don't do this, the client will get confused if you restart phantom.
-				packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
-
-				// Overwrite port numbers sent back from server (if any)
-				if packet.Pong.Port4 != "" && !proxy.prefs.RemovePorts {
-					packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
-					packet.Pong.Port6 = packet.Pong.Port4
-				} else if proxy.prefs.RemovePorts {
-					packet.Pong.Port4 = ""
-					packet.Pong.Port6 = ""
-				}
-
-				// Rewrite server MOTD to remove ports
-				packetBuffer := packet.Build()
-				data = packetBuffer.Bytes()
-
-				log.Debug().Msgf("Sent Unconnected Pong to client: %v", packet)
-			} else {
-				log.Warn().Msgf("Failed to rewrite pong: %v", err)
-			}
+		// Rewrite Unconnected Pong packets
+		if packetID := data[0]; packetID == proto.UnconnectedPongID {
+			data = proxy.rewriteUnconnectedPong(data)
+			log.Info().Msgf("Sent LAN pong to client: %v", client.String())
 		}
 
 		proxy.server.WriteTo(data, client)
 	}
+}
+
+func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
+	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
+
+	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
+		// Overwrite the server ID with one unique to this phantom instance.
+		// If we don't do this, the client will get confused if you restart phantom.
+		packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
+
+		// Overwrite port numbers sent back from server (if any)
+		if packet.Pong.Port4 != "" && !proxy.prefs.RemovePorts {
+			packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
+			packet.Pong.Port6 = packet.Pong.Port4
+		} else if proxy.prefs.RemovePorts {
+			packet.Pong.Port4 = ""
+			packet.Pong.Port6 = ""
+		}
+
+		packetBuffer := packet.Build()
+		log.Debug().Msgf("Unconnected Pong: %v", packet)
+		return packetBuffer.Bytes()
+	} else {
+		log.Warn().Msgf("Failed to rewrite pong: %v", err)
+	}
+
+	return data
 }
