@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/jhead/phantom/internal/util"
@@ -29,10 +30,11 @@ type PongData struct {
 	SubMOTD         string
 	GameType        string
 	NintendoLimited string
-	// Specifically omit these two because they cause issues
-	// Port4           string
-	// Port6           string
+	Port4           string
+	Port6           string
 }
+
+var dupeSemicolonRegex = regexp.MustCompile(";{2,}$")
 
 func ReadUnconnectedReply(in []byte) (reply *UnconnectedReply, err error) {
 	reply = &UnconnectedReply{}
@@ -114,8 +116,12 @@ func writePong(pong PongData) string {
 	var pongDataFields []string
 	pongDataFieldsRaw := util.MapStructToFields(&pong)
 	for _, value := range pongDataFieldsRaw {
-		pongDataFields = append(pongDataFields, fmt.Sprintf("%v", value))
+		stringValue := fmt.Sprintf("%v", value)
+		pongDataFields = append(pongDataFields, stringValue)
 	}
 
-	return strings.Join(pongDataFields, ";")
+	// Ensure that there aren't a bunch of ; on the end, but at least one
+	joined := strings.Join(pongDataFields, ";")
+	joined = dupeSemicolonRegex.ReplaceAllString(joined, "")
+	return fmt.Sprintf("%s;", joined)
 }

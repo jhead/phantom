@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jhead/phantom/internal/clientmap"
-	"github.com/jhead/phantom/internal/logging"
 	"github.com/jhead/phantom/internal/proto"
+	"github.com/rs/zerolog/log"
 	"github.com/tevino/abool"
 
 	reuse "github.com/libp2p/go-reuseport"
@@ -16,13 +16,14 @@ import (
 
 const maxMTU = 1472
 
-var logger = logging.Get()
 var idleCheckInterval = 5 * time.Second
 
 type ProxyServer struct {
 	bindAddress         *net.UDPAddr
+	boundPort           uint16
 	remoteServerAddress *net.UDPAddr
 	pingServer          net.PacketConn
+	pingServerV6        net.PacketConn
 	server              *net.UDPConn
 	clientMap           *clientmap.ClientMap
 	prefs               ProxyPrefs
@@ -34,14 +35,18 @@ type ProxyPrefs struct {
 	BindPort     uint16
 	RemoteServer string
 	IdleTimeout  time.Duration
+	EnableIPv6   bool
+	RemovePorts  bool
 }
+
+var randSource = rand.NewSource(time.Now().UnixNano())
+var serverID = randSource.Int63()
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	bindPort := prefs.BindPort
 
 	// Randomize port if not provided
 	if bindPort == 0 {
-		randSource := rand.NewSource(time.Now().UnixNano())
 		bindPort = (uint16(randSource.Int63()) % 14000) + 50000
 	}
 
@@ -60,7 +65,9 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 
 	return &ProxyServer{
 		bindAddress,
+		bindPort,
 		remoteServerAddress,
+		nil,
 		nil,
 		nil,
 		clientmap.New(prefs.IdleTimeout, idleCheckInterval),
@@ -72,26 +79,45 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 func (proxy *ProxyServer) Start() error {
 	// Bind to 19132 on all addresses to receive broadcasted pings
 	// Sets SO_REUSEADDR et al to support multiple instances of phantom
-	logger.Printf("Binding ping server to: %v\n", "0.0.0.0:19132")
-	if pingServer, err := reuse.ListenPacket("udp", "0.0.0.0:19132"); err == nil {
+	log.Info().Msgf("Binding ping server to port 19132")
+	if pingServer, err := reuse.ListenPacket("udp4", ":19132"); err == nil {
 		proxy.pingServer = pingServer
+
+		// Start proxying ping packets from the broadcast listener
+		go proxy.readLoop(proxy.pingServer)
 	} else {
 		// Bind failed
 		return err
 	}
 
+	// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
+	if proxy.prefs.EnableIPv6 {
+		log.Info().Msgf("Binding IPv6 ping server to port 19133")
+		if pingServerV6, err := reuse.ListenPacket("udp6", ":19133"); err == nil {
+			proxy.pingServerV6 = pingServerV6
+
+			// Start proxying ping packets from the broadcast listener
+			go proxy.readLoop(proxy.pingServerV6)
+		} else {
+			// IPv6 Bind failed
+			log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
+		}
+	}
+
+	network := "udp4"
+	if proxy.prefs.EnableIPv6 {
+		network = "udp"
+	}
+
 	// Bind to specified UDP addr and port to receive data from Minecraft clients
-	logger.Printf("Binding proxy server to: %v\n", proxy.bindAddress)
-	if server, err := net.ListenUDP("udp", proxy.bindAddress); err == nil {
+	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
+	if server, err := net.ListenUDP(network, proxy.bindAddress); err == nil {
 		proxy.server = server
 	} else {
 		return err
 	}
 
-	logger.Printf("Proxy server listening!")
-
-	// Start proxying ping packets from the broadcast listener
-	go proxy.readLoop(proxy.pingServer)
+	log.Info().Msgf("Proxy server listening!")
 
 	// Start processing everything else using the proxy listener
 	proxy.readLoop(proxy.server)
@@ -100,11 +126,15 @@ func (proxy *ProxyServer) Start() error {
 }
 
 func (proxy *ProxyServer) Close() {
-	logger.Println("Stopping proxy server")
+	log.Info().Msgf("Stopping proxy server")
 
 	// Stop UDP listeners
 	proxy.server.Close()
 	proxy.pingServer.Close()
+
+	if proxy.pingServerV6 != nil {
+		proxy.pingServerV6.Close()
+	}
 
 	// Close all connections
 	proxy.clientMap.Close()
@@ -121,11 +151,11 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	for !proxy.dead.IsSet() {
 		err := proxy.processDataFromClients(listener, packetBuffer)
 		if err != nil {
-			logger.Printf("Error while processing client data: %s\n", err)
+			log.Info().Msgf("Error while processing client data: %s", err)
 		}
 	}
 
-	logger.Printf("Listener shut down: %s\n", listener.LocalAddr())
+	log.Info().Msgf("Listener shut down: %s", listener.LocalAddr())
 }
 
 // Inspects an incoming UDP packet, looking up the client in our connection
@@ -141,9 +171,11 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	}
 
 	data := packetBuffer[:read]
+	log.Trace().Msgf("client recv: %v", data)
 
 	// Handler triggered when a new client connects and we create a new connetion to the remote server
 	onNewConnection := func(newServerConn *net.UDPConn) {
+		log.Info().Msgf("New connection from client %s -> %s", client.String(), listener.LocalAddr())
 		proxy.processDataFromServer(newServerConn, client)
 	}
 
@@ -172,7 +204,7 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 
 		// Read error
 		if err != nil {
-			fmt.Println(err)
+			log.Warn().Msgf("%v", err)
 			break
 		}
 
@@ -183,15 +215,33 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 
 		// Resize data to byte count from 'read'
 		data := buffer[:read]
+		log.Trace().Msgf("server recv: %v", data)
 
 		// Rewrite Unconnected Reply packets
 		if packetID := data[0]; packetID == proto.UnconnectedReplyID {
+			log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
+
 			if packet, err := proto.ReadUnconnectedReply(data); err == nil {
+				// Overwrite the server ID with one unique to this phantom instance.
+				// If we don't do this, the client will get confused if you restart phantom.
+				packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
+
+				// Overwrite port numbers sent back from server (if any)
+				if packet.Pong.Port4 != "" && !proxy.prefs.RemovePorts {
+					packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
+					packet.Pong.Port6 = packet.Pong.Port4
+				} else if proxy.prefs.RemovePorts {
+					packet.Pong.Port4 = ""
+					packet.Pong.Port6 = ""
+				}
+
 				// Rewrite server MOTD to remove ports
 				packetBuffer := packet.Build()
 				data = packetBuffer.Bytes()
+
+				log.Debug().Msgf("Sent Unconnected Pong to client: %v", packet)
 			} else {
-				fmt.Printf("Failed to rewrite pong: %v\n", err)
+				log.Warn().Msgf("Failed to rewrite pong: %v", err)
 			}
 		}
 

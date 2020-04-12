@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jhead/phantom/internal/proxy"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 var bindAddressString string
@@ -22,6 +24,9 @@ func main() {
 	bindArg := flag.String("bind", "0.0.0.0", "Optional: IP address to listen on. Defaults to all interfaces.")
 	bindPortArg := flag.Int("bind_port", 0, "Optional: Port to listen on. Defaults to 0, which selects a random port.\nNote that phantom always binds to port 19132 as well, so both ports need to be open.")
 	timeoutArg := flag.Int("timeout", 60, "Optional: Seconds to wait before cleaning up a disconnected client")
+	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
+	ipv6Arg := flag.Bool("6", false, "Optional: Enables IPv6 support on port 19133 (experimental)")
+	removePortsArg := flag.Bool("remove_ports", false, "Optional: Forces ports to be excluded from pong packets (experimental)")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -36,13 +41,25 @@ func main() {
 	idleTimeout := time.Duration(*timeoutArg) * time.Second
 	bindPortInt = uint16(*bindPortArg)
 
+	logLevel := zerolog.InfoLevel
+	if *debugArg {
+		logLevel = zerolog.DebugLevel
+	}
+
 	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
+
+	// Configure logging output
+	log.Logger = log.
+		Output(zerolog.ConsoleWriter{Out: os.Stdout}).
+		Level(logLevel)
 
 	proxyServer, err := proxy.New(proxy.ProxyPrefs{
 		bindAddressString,
 		bindPortInt,
 		serverAddressString,
 		idleTimeout,
+		*ipv6Arg,
+		*removePortsArg,
 	})
 
 	if err != nil {

@@ -34,11 +34,16 @@ a few seconds. If not, you did something wrong. Or I did ;)
 Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
+  -6	Optional: Enables IPv6 support on port 19133 (experimental)
   -bind string
     	Optional: IP address to listen on. Defaults to all interfaces. (default "0.0.0.0")
   -bind_port int
     	Optional: Port to listen on. Defaults to 0, which selects a random port.
     	Note that phantom always binds to port 19132 as well, so both ports need to be open.
+  -debug
+    	Optional: Enables debug logging
+  -remove_ports
+    	Optional: Forces ports to be excluded from pong packets (experimental)
   -server string
     	Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
   -timeout int

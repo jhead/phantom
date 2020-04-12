@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jhead/phantom/internal/logging"
+	"github.com/rs/zerolog/log"
 	"github.com/tevino/abool"
 )
 
@@ -26,8 +26,6 @@ type clientEntry struct {
 }
 
 type ServerConnHandler func(*net.UDPConn)
-
-var logger = logging.Get()
 
 func New(idleTimeout time.Duration, idleCheckInterval time.Duration) *ClientMap {
 	clientMap := ClientMap{
@@ -63,7 +61,7 @@ func (cm *ClientMap) Close() {
 // Cleans up clients and remote connections that have not been used in a while.
 // Blocks until the ClientMap has been closed.
 func (cm *ClientMap) idleCleanupLoop() {
-	logger.Println("Starting idle connection handler")
+	log.Info().Msg("Starting idle connection handler")
 
 	// Loop forever using a channel that emits every IdleCheckInterval
 	for currentTime := range time.Tick(cm.IdleCheckInterval) {
@@ -75,7 +73,7 @@ func (cm *ClientMap) idleCleanupLoop() {
 		cm.mutex.Lock()
 		for key, client := range cm.clients {
 			if client.lastActive.Add(cm.IdleTimeout).Before(currentTime) {
-				logger.Printf("Cleaning up idle connection: %s", key)
+				log.Info().Msgf("Cleaning up idle connection: %s", key)
 				cm.clients[key].conn.Close()
 				delete(cm.clients, key)
 			}
@@ -106,7 +104,7 @@ func (cm *ClientMap) Get(
 	}
 
 	// New connection needed
-	logger.Printf("Opening connection to %s for new client %s!\n", remote, clientAddr)
+	log.Info().Msgf("Opening connection to %s for new client %s!", remote, clientAddr)
 	newServerConn, err := newServerConnection(remote)
 	if err != nil {
 		return nil, err
@@ -125,7 +123,7 @@ func (cm *ClientMap) Get(
 
 // Creates a UDP connection to the remote address
 func newServerConnection(remote *net.UDPAddr) (*net.UDPConn, error) {
-	logger.Printf("Opening connection to %s\n", remote)
+	log.Info().Msgf("Opening connection to %s", remote)
 
 	conn, err := net.DialUDP("udp", nil, remote)
 	if err != nil {
