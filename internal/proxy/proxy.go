@@ -232,6 +232,13 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 	}
 }
 
+// Minecrat's LAN server list sends pings and expects pongs from all local servers.
+//
+// Passing this pong packet straight from the server back to the client without
+// modifying it can cause issues, because it often includes port numbers
+// for the server, confusing the client (since it should talk to phantom).
+//
+// This packet also includes the server MOTD, player count, etc.
 func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
 
