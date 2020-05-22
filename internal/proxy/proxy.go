@@ -1,10 +1,10 @@
 package proxy
 
 import (
-	"bytes"
 	"fmt"
 	"math/rand"
 	"net"
+	"regexp"
 	"time"
 
 	"github.com/jhead/phantom/internal/clientmap"
@@ -29,7 +29,7 @@ type ProxyServer struct {
 	clientMap           *clientmap.ClientMap
 	prefs               ProxyPrefs
 	dead                *abool.AtomicBool
-	pongData            *proto.UnconnectedPing
+	serverOffline 		bool
 }
 
 type ProxyPrefs struct {
@@ -43,6 +43,7 @@ type ProxyPrefs struct {
 
 var randSource = rand.NewSource(time.Now().UnixNano())
 var serverID = randSource.Int63()
+var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	bindPort := prefs.BindPort
@@ -75,7 +76,7 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		clientmap.New(prefs.IdleTimeout, idleCheckInterval),
 		prefs,
 		abool.New(),
-		nil,
+		false,
 	}, nil
 }
 
@@ -123,81 +124,10 @@ func (proxy *ProxyServer) Start() error {
 	log.Info().Msgf("Proxy server listening!")
 	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
 
-	// Start unconnectedpinging the remote server
-	proxy.pingRemoteServer()
-
 	// Start processing everything else using the proxy listener
 	proxy.readLoop(proxy.server)
 
 	return nil
-}
-
-func (proxy *ProxyServer) pingRemoteServer() {
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				data := proxy.ping()
-				if data != nil && data.Pong.Edition == "MCPE" {
-					proxy.pongData = data
-				} else {
-					proxy.pongData = &proto.UnconnectedPing{
-						PingTime: []byte{0, 0, 0, 0, 0, 0, 0, 0},
-						ID:       []byte{0, 0, 0, 0, 0, 0, 0, 0},
-						Magic:    []byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78},
-						Pong: proto.PongData{
-							Edition:         "MCPE",
-							MOTD:            "Server offline",
-							ProtocolVersion: "390",
-							Version:         "1.14.60",
-							Players:         "0",
-							MaxPlayers:      "0",
-							GameType:        "Creative",
-							NintendoLimited: "1",
-						},
-					}
-				}
-			}
-		}
-	}()
-}
-
-func (proxy *ProxyServer) ping() *proto.UnconnectedPing {
-	conn, err := net.DialUDP("udp", nil, proxy.remoteServerAddress)
-	if err != nil {
-		return nil
-	}
-
-	defer conn.Close()
-
-	var buffer bytes.Buffer
-
-	buffer.WriteByte(proto.UnconnectedPingID)
-	buffer.Write([]byte{0, 0, 0, 0})
-	buffer.Write([]byte{0, 34, 45, 79})
-	buffer.Write([]byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78})
-
-	if _, err := conn.Write(buffer.Bytes()); err != nil {
-		return nil
-	}
-
-	// Set a read deadline so that we get a timeout if the server doesn't respond to us.
-	_ = conn.SetReadDeadline(time.Now().Add(time.Second * 5))
-
-	data := make([]byte, 1492)
-	n, err := conn.Read(data)
-	if err != nil {
-		return nil
-	}
-	data = data[:n]
-
-	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
-		return packet
-	} else {
-		return nil
-	}
 }
 
 func (proxy *ProxyServer) Close() {
@@ -240,6 +170,7 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 // When a new client connects, an additional goroutine is created to read
 // data from the server and send it back to the client.
 func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packetBuffer []byte) error {
+	// Read the next packet from the client
 	read, client, _ := listener.ReadFrom(packetBuffer)
 	if read <= 0 {
 		return nil
@@ -267,16 +198,15 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	if packetID := data[0]; packetID == proto.UnconnectedPingID {
 		log.Info().Msgf("Received LAN ping from client: %s", client.String())
 
-		// only if pongData settled from pingRemoteServer()
-		if proxy.pongData != nil {
-			replyBuffer := proxy.pongData.Build()
+		if proxy.serverOffline {
+			replyBuffer := proto.OfflinePong
 			replyBytes := proxy.rewriteUnconnectedPong(replyBuffer.Bytes())
 
 			proxy.server.WriteTo(replyBytes, client)
-			log.Info().Msgf("Sent LAN pong to client: %v", client.String())
+			log.Info().Msgf("Sent server offline pong to client: %v", client.String())
 		}
 
-		return nil
+		// Pass ping through to server even if it's offline
 	}
 
 	// Write packet from client to server
@@ -290,11 +220,24 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 	buffer := make([]byte, maxMTU)
 
 	for !proxy.dead.IsSet() {
+		// Set a read timeout of 5 seconds
+		_ = remoteConn.SetReadDeadline(time.Now().Add(time.Second * 5))
+
+		// Read the next packet from the server
 		read, _, err := remoteConn.ReadFrom(buffer)
 
 		// Read error
 		if err != nil {
 			log.Warn().Msgf("%v", err)
+
+			offlineError := offlineErrorRegex.MatchString(err.Error())
+
+			if offlineError && !proxy.serverOffline {
+				log.Warn().Msgf("Server seems to be offline :(")
+				log.Warn().Msgf("We'll keep trying to connect...")
+				proxy.serverOffline = true
+			}
+
 			break
 		}
 
@@ -303,12 +246,25 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 			continue
 		}
 
+		if proxy.serverOffline {
+			log.Info().Msgf("Server is back online!")
+			proxy.serverOffline = false
+		}
+
 		// Resize data to byte count from 'read'
 		data := buffer[:read]
 		log.Trace().Msgf("server recv: %v", data)
 
+		// Rewrite Unconnected Pong packets
+		if packetID := data[0]; packetID == proto.UnconnectedPongID {
+			data = proxy.rewriteUnconnectedPong(data)
+			log.Info().Msgf("Sent LAN pong to client: %v", client.String())
+		}
+
 		proxy.server.WriteTo(data, client)
 	}
+
+	proxy.clientMap.Delete(client)
 }
 
 func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {

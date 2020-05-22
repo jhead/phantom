@@ -35,6 +35,22 @@ type PongData struct {
 	Port6           string
 }
 
+var OfflinePong = UnconnectedPing{
+	PingTime: []byte{0, 0, 0, 0, 0, 0, 0, 0},
+	ID:       []byte{0, 0, 0, 0, 0, 0, 0, 0},
+	Magic:    []byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78},
+	Pong: PongData{
+		Edition:         "MCPE",
+		MOTD:            "phantom §cServer offline",
+		ProtocolVersion: "390",
+		Version:         "1.14.60",
+		Players:         "0",
+		MaxPlayers:      "0",
+		GameType:        "Creative",
+		NintendoLimited: "1",
+	},
+}.Build()
+
 var dupeSemicolonRegex = regexp.MustCompile(";{2,}$")
 
 func ReadUnconnectedPing(in []byte) (reply *UnconnectedPing, err error) {

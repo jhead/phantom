@@ -82,6 +82,17 @@ func (cm *ClientMap) idleCleanupLoop() {
 	}
 }
 
+func (cm *ClientMap) Delete(clientAddr net.Addr) {
+	key := clientAddr.String()
+
+	cm.mutex.Lock()
+
+	cm.clients[key].conn.Close()
+	delete(cm.clients, key)
+	
+	cm.mutex.Unlock()
+}
+
 // Get gets or creates a new UDP connection to the remote server and stores it
 // in a map, matching clients to remote server connections. This way, we keep one
 // UDP connection open to the server for each client. The handler parameter is
