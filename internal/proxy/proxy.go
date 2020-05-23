@@ -29,7 +29,7 @@ type ProxyServer struct {
 	clientMap           *clientmap.ClientMap
 	prefs               ProxyPrefs
 	dead                *abool.AtomicBool
-	serverOffline 		bool
+	serverOffline       bool
 }
 
 type ProxyPrefs struct {
@@ -195,6 +195,9 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 		return err
 	}
 
+	// Wait 5 seconds for the server to respond to whatever we sent, or else timeout
+	_ = serverConn.SetReadDeadline(time.Now().Add(time.Second * 5))
+
 	if packetID := data[0]; packetID == proto.UnconnectedPingID {
 		log.Info().Msgf("Received LAN ping from client: %s", client.String())
 
@@ -220,11 +223,11 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 	buffer := make([]byte, maxMTU)
 
 	for !proxy.dead.IsSet() {
-		// Set a read timeout of 5 seconds
-		_ = remoteConn.SetReadDeadline(time.Now().Add(time.Second * 5))
-
 		// Read the next packet from the server
 		read, _, err := remoteConn.ReadFrom(buffer)
+
+		// Remove read timeout, server responded
+		_ = remoteConn.SetReadDeadline(time.Time{})
 
 		// Read error
 		if err != nil {

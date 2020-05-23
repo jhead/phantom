@@ -87,9 +87,11 @@ func (cm *ClientMap) Delete(clientAddr net.Addr) {
 
 	cm.mutex.Lock()
 
-	cm.clients[key].conn.Close()
-	delete(cm.clients, key)
-	
+	if client, exists := cm.clients[key]; exists {
+		client.conn.Close()
+		delete(cm.clients, key)
+	}
+
 	cm.mutex.Unlock()
 }
 
