@@ -147,6 +147,10 @@ your Windows Firewall settings and open up all UDP ports for phantom.
 
 **My server isn't showing up on the list but it's online and phantom is showing connections!**
 
-Make sure "Visible to LAN players" is turn **ON** in your server's settings: *(below shows setting OFF)* [(more info)]()
+Make sure "Visible to LAN players" is turn **ON** in your server's settings: *(below shows setting OFF)*
 
 <img src="https://user-images.githubusercontent.com/42201487/81394390-25f5c200-9122-11ea-83ba-a24eea96c83b.png" width=350 />
+
+More info:
+- https://github.com/jhead/phantom/issues/80#issuecomment-625737070
+- https://github.com/jhead/phantom/issues/29#issuecomment-612808296
