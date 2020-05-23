@@ -32,8 +32,14 @@ func main() {
 	flag.Parse()
 
 	if *serverArg == "" {
-		flag.Usage()
-		return
+		// Maybe it only has the server IP?
+		if len(os.Args) == 2 {
+			*serverArg = os.Args[1]
+		} else {
+			fmt.Println("Did you forget -server?")
+			flag.Usage()
+			return
+		}
 	}
 
 	bindAddressString = *bindArg
