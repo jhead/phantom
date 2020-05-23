@@ -142,3 +142,11 @@ computer, a VM, or even with a Minecraft hosting service.
 Note that you almost definitely need to create a firewall rule for this to work.
 On macOS, you'll be prompted automatically. On Windows, you may need to go into
 your Windows Firewall settings and open up all UDP ports for phantom.
+
+## Troubleshooting
+
+**My server isn't showing up on the list but it's online and phantom is showing connections!**
+
+Make sure "Visible to LAN players" is turn **ON** in your server's settings: *(below shows setting OFF)* [(more info)]()
+
+<img src="https://user-images.githubusercontent.com/42201487/81394390-25f5c200-9122-11ea-83ba-a24eea96c83b.png" width=350 />
