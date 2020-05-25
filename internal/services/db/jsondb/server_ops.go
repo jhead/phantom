@@ -37,10 +37,8 @@ func (database Database) GetServer(id string) (model.Server, error) {
 
 func (database Database) CreateServer(server model.Server) error {
 	contents, err := database.readJSON()
-
 	if err != nil {
-		panic(err)
-		// return err
+		return err
 	}
 
 	if _, exists := contents.Servers[server.ID]; exists {
@@ -57,5 +55,16 @@ func (database Database) UpdateServer(server model.Server) error {
 }
 
 func (database Database) DeleteServer(id string) error {
-	return nil
+	contents, err := database.readJSON()
+	if err != nil {
+		return err
+	}
+
+	if _, exists := contents.Servers[id]; !exists {
+		return model.ServerNotFoundError
+	}
+
+	delete(contents.Servers, id)
+
+	return database.writeJSON(contents)
 }
