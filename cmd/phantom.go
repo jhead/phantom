@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/jhead/phantom/internal/proxy"
+	"github.com/jhead/phantom/internal/services/api"
+	"github.com/jhead/phantom/internal/services/db/jsondb"
+	"github.com/jhead/phantom/internal/services/servers"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -17,67 +20,36 @@ var serverAddressString string
 var bindPortInt uint16
 
 func main() {
-	// Required
-	serverArg := flag.String("server", "", "Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
+	// Common
+	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
+	apiFlag := flag.Bool("api", false, "Optional: Enables an HTTP server and JSON REST API for managing phantom")
 
-	// Optional
+	// Single-server mode
+	serverArg := flag.String("server", "", "Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)")
 	bindArg := flag.String("bind", "0.0.0.0", "Optional: IP address to listen on. Defaults to all interfaces.")
 	bindPortArg := flag.Int("bind_port", 0, "Optional: Port to listen on. Defaults to 0, which selects a random port.\nNote that phantom always binds to port 19132 as well, so both ports need to be open.")
 	timeoutArg := flag.Int("timeout", 60, "Optional: Seconds to wait before cleaning up a disconnected client")
-	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
 	ipv6Arg := flag.Bool("6", false, "Optional: Enables IPv6 support on port 19133 (experimental)")
 	removePortsArg := flag.Bool("remove_ports", false, "Optional: Forces ports to be excluded from pong packets (experimental)")
 
 	flag.Usage = usage
 	flag.Parse()
 
-	if *serverArg == "" {
-		// Maybe it only has the server IP?
-		if len(os.Args) == 2 {
-			*serverArg = os.Args[1]
-		} else {
-			fmt.Println("Did you forget -server?")
-			flag.Usage()
-			return
-		}
-	}
-
-	bindAddressString = *bindArg
-	serverAddressString = *serverArg
-	idleTimeout := time.Duration(*timeoutArg) * time.Second
-	bindPortInt = uint16(*bindPortArg)
-
 	logLevel := zerolog.InfoLevel
 	if *debugArg {
 		logLevel = zerolog.DebugLevel
 	}
-
-	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
 
 	// Configure logging output
 	log.Logger = log.
 		Output(zerolog.ConsoleWriter{Out: os.Stdout}).
 		Level(logLevel)
 
-	proxyServer, err := proxy.New(proxy.ProxyPrefs{
-		bindAddressString,
-		bindPortInt,
-		serverAddressString,
-		idleTimeout,
-		*ipv6Arg,
-		*removePortsArg,
-	})
-
-	if err != nil {
-		fmt.Printf("Failed to init server: %s\n", err)
-		return
-	}
-
-	// Watch for CTRL + C
-	watchForInterrupt(proxyServer)
-
-	if err := proxyServer.Start(); err != nil {
-		fmt.Printf("Failed to start server: %s\n", err)
+	// SelectSingle-server mode (original) or API mode
+	if !*apiFlag {
+		singleServerMode(serverArg, bindArg, bindPortArg, timeoutArg, ipv6Arg, removePortsArg)
+	} else {
+		apiServerMode()
 	}
 }
 
@@ -88,7 +60,7 @@ func usage() {
 
 // Watches for CTRL + C signals and shuts down the server
 // A second CTRL + C will force it to exit immediately
-func watchForInterrupt(proxyServer *proxy.ProxyServer) {
+func watchForInterrupt(finalizer func()) {
 	signalChan := make(chan os.Signal, 1)
 
 	signal.Notify(signalChan, os.Interrupt)
@@ -105,7 +77,85 @@ func watchForInterrupt(proxyServer *proxy.ProxyServer) {
 			fmt.Println("\nPress CTRL + C again to force quit")
 
 			once = true
-			proxyServer.Close()
+			finalizer()
 		}
 	}()
+}
+
+func singleServerMode(
+	serverArg *string,
+	bindArg *string,
+	bindPortArg *int,
+	timeoutArg *int,
+	ipv6Arg *bool,
+	removePortsArg *bool,
+) {
+	serverAddressString := *serverArg
+
+	if serverAddressString == "" {
+		// Maybe it only has the server IP?
+		if len(os.Args) == 2 {
+			serverAddressString = os.Args[1]
+		} else {
+			fmt.Println("Did you forget -server?")
+			flag.Usage()
+			return
+		}
+	}
+
+	bindAddressString = *bindArg
+	idleTimeout := time.Duration(*timeoutArg) * time.Second
+	bindPortInt = uint16(*bindPortArg)
+
+	fmt.Printf("Starting up with remote server IP: %s\n", serverAddressString)
+
+	proxyServer, err := proxy.New(proxy.ProxyPrefs{
+		bindAddressString,
+		bindPortInt,
+		serverAddressString,
+		idleTimeout * time.Second,
+		*ipv6Arg,
+		*removePortsArg,
+	})
+
+	if err != nil {
+		fmt.Printf("Failed to init server: %s\n", err)
+		return
+	}
+
+	// Watch for CTRL + C
+	watchForInterrupt(func() {
+		proxyServer.Close()
+	})
+
+	if err := proxyServer.Start(); err != nil {
+		fmt.Printf("Failed to start server: %s\n", err)
+	}
+}
+
+func apiServerMode() {
+	fmt.Println("Starting up in API server mode")
+
+	database, err := jsondb.New("./phantom.json")
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Failed to open database")
+		return
+	}
+
+	settings, err := database.GetSettings()
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Failed to load settings")
+		return
+	}
+
+	apiService := api.New(settings, servers.New(database))
+
+	watchForInterrupt(func() {
+		log.Info().Msg("Shutting down API server")
+		apiService.Close()
+	})
+
+	if err := apiService.Start(); err != nil {
+		log.Fatal().Msgf("Failed to start API server: %v", err)
+	}
 }

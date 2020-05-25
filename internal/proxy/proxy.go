@@ -33,12 +33,12 @@ type ProxyServer struct {
 }
 
 type ProxyPrefs struct {
-	BindAddress  string
-	BindPort     uint16
-	RemoteServer string
-	IdleTimeout  time.Duration
-	EnableIPv6   bool
-	RemovePorts  bool
+	BindAddress  string        `json:"bindAddress"`
+	BindPort     uint16        `json:"bindPort"`
+	RemoteServer string        `json:"remoteServer"`
+	IdleTimeout  time.Duration `json:"idleTimeout"`
+	EnableIPv6   bool          `json:"ipv6"`
+	RemovePorts  bool          `json:"-"`
 }
 
 var randSource = rand.NewSource(time.Now().UnixNano())
@@ -51,6 +51,11 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	// Randomize port if not provided
 	if bindPort == 0 {
 		bindPort = (uint16(randSource.Int63()) % 14000) + 50000
+	}
+
+	if prefs.IdleTimeout.Seconds() < 10 {
+		log.Warn().Msgf("Idle timeout interval of %d is too low, defaulting to 30", prefs.IdleTimeout)
+		prefs.IdleTimeout = 10 * time.Second
 	}
 
 	// Format full bind address with port
@@ -73,7 +78,7 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		nil,
 		nil,
 		nil,
-		clientmap.New(prefs.IdleTimeout, idleCheckInterval),
+		nil,
 		prefs,
 		abool.New(),
 		false,
@@ -81,6 +86,9 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 }
 
 func (proxy *ProxyServer) Start() error {
+	fmt.Println(proxy.prefs)
+	proxy.clientMap = clientmap.New(proxy.prefs.IdleTimeout, idleCheckInterval)
+
 	// Bind to 19132 on all addresses to receive broadcasted pings
 	// Sets SO_REUSEADDR et al to support multiple instances of phantom
 	log.Info().Msgf("Binding ping server to port 19132")
