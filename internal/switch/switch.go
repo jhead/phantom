@@ -6,395 +6,211 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"strings"
-	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/mdlayher/arp"
+	"github.com/jhead/phantom/internal/switch/findswitch"
+	"github.com/jhead/phantom/internal/switch/mitm"
+	"github.com/jhead/phantom/internal/switch/netutils"
 	"github.com/mdlayher/ethernet"
 	"github.com/mdlayher/raw"
 	"github.com/miekg/dns"
+	"github.com/pkg/errors"
 )
 
-type sourceInterface struct {
-	iface net.Interface
-	ip    net.IP
-	net   net.IPNet
-}
-
-type foundDevice struct {
-	addr net.HardwareAddr
-	ip   net.IP
-}
-
-var macPrefixes = map[string]bool{
-	"0403D6": true,
-	"342FBD": true,
-	"48A5E7": true,
-	"582F40": true,
-	"5C521E": true,
-	"606BFF": true,
-	"64B5C6": true,
-	"7048F7": true,
-	"9458CB": true,
-	"98415C": true,
-	"98B6E9": true,
-	"98E8FA": true,
-	"A438CC": true,
-	"B87826": true,
-	"B88AEC": true,
-	"D4F057": true,
-	"DC68EB": true,
-	"E0F6B5": true,
-	"E8DA20": true,
-	"ECC40D": true,
-}
-
 func main() {
-	source, err := getPreferredInterface()
+	// go interceptDNS(switchAddr.addr, *source, gatewayMac)
+	// spoofGateway(*source, switchAddr.addr, gatewayIP)
+	iface, err := netutils.GetPreferredInterface()
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println(source)
-
-	ctx, stopScanning := context.WithCancel(context.Background())
-
-	go arpEntireSubnet(ctx, *source)
-
-	switchAddr, err := detectNintendoARP(*source)
+	gatewayIP, gatewayMAC, err := netutils.GetDefaultGateway()
 	if err != nil {
 		panic(err)
 	}
 
-	stopScanning()
+	switchDevice, err := findswitch.FindNintendoSwitch()
 
-	gatewayMac, err := net.ParseMAC("dc:7f:a4:0a:56:6d")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	recvPackets := make(chan mitm.Packet)
+	dnsChan := make(chan []byte)
+
+	// Creates a raw socket capable of receiving all traffic on this interface
+	etherClient, err := raw.ListenPacket(&iface.Interface, uint16(ethernet.EtherTypeIPv4), &raw.Config{})
 	if err != nil {
 		panic(err)
 	}
 
-	gatewayIP := net.ParseIP("192.168.1.254") // todo
+	filters := packetFilters(*switchDevice, dnsChan)
 
-	go interceptDNS(switchAddr.addr, *source, gatewayMac)
+	go mitm.ForwardAll(ctx, etherClient, recvPackets, iface.Interface, gatewayMAC)
+	go mitm.Sniff(ctx, etherClient, filters, recvPackets)
+	go mitm.SpoofARP(ctx, *iface, switchDevice.MAC, gatewayIP)
 
-	spoofGateway(*source, switchAddr.addr, gatewayIP)
+	injectDNSReplies(ctx, etherClient, iface.Interface, gatewayIP, *switchDevice, dnsChan)
 }
 
-func interceptDNS(targetMac net.HardwareAddr, source sourceInterface, gatewayMac net.HardwareAddr) {
-	udpClient, err := raw.ListenPacket(&source.iface, uint16(ethernet.EtherTypeIPv4), &raw.Config{})
-	if err != nil {
-		panic(err)
+func packetFilters(switchDevice findswitch.NintendoSwitch, dnsChan chan []byte) []mitm.PacketFilter {
+	shortFilter := func(packet []byte) bool {
+		return len(packet) > 12
 	}
 
-	if err := udpClient.SetPromiscuous(true); err != nil {
-		panic(err)
+	sourceMatchesSwitch := func(packet []byte) bool {
+		return bytes.Equal(packet[6:12], switchDevice.MAC)
 	}
 
-	fmt.Println("Intercepting DNS")
-
-	buffer := make([]byte, 1500)
-	for {
-		read, _, err := udpClient.ReadFrom(buffer)
-		if err != nil {
-			fmt.Println(err)
-			continue
+	interceptDNS := func(packet []byte) bool {
+		if shouldInterceptPacket(packet) {
+			dnsChan <- packet
+			return false
 		}
 
-		readBuffer := buffer[:read]
+		return true
+	}
 
-		if read < 12 {
-			// too short
-			continue
-		} else if !bytes.Equal(readBuffer[6:12], targetMac) {
-			continue
-		} else if bytes.Contains(readBuffer[12:], []byte{0x6d, 0x63, 0x6f, 0x04, 0x6c, 0x62, 0x73, 0x67, 0x03, 0x6e, 0x65, 0x74, 0x00}) {
-			fmt.Println("DETECTED LBSG")
-
-			dnsReq := dns.Msg{}
-			err := dnsReq.Unpack(readBuffer[42:])
-			fmt.Println(err)
-			fmt.Println(dnsReq)
-
-			sourcePortBytes := readBuffer[34:36]
-			sourcePort := binary.BigEndian.Uint16(sourcePortBytes)
-
-			rr, err := dns.NewRR(fmt.Sprintf("%s 3600 IN A %s", "mco.lbsg.net.", "104.219.3.4"))
-			if err != nil {
-				panic(err)
-			}
-
-			dnsReply := dns.Msg{
-				MsgHdr: dns.MsgHdr{
-					Id:       dnsReq.Id,
-					Response: true,
-					Opcode:   dns.OpcodeQuery,
-					Rcode:    0,
-				},
-				Question: dnsReq.Question,
-				Answer:   []dns.RR{rr},
-			}
-
-			replyBuffer, err := dnsReply.Pack()
-			if err != nil {
-				panic(err)
-			}
-
-			ipLayer := &layers.IPv4{
-				Version:  4,
-				SrcIP:    net.IP{192, 168, 1, 254},
-				DstIP:    net.IP{192, 168, 1, 67},
-				TTL:      64,
-				Protocol: layers.IPProtocolUDP,
-			}
-
-			udpLayer := &layers.UDP{
-				SrcPort: 53,
-				DstPort: layers.UDPPort(sourcePort),
-			}
-
-			udpLayer.SetNetworkLayerForChecksum(ipLayer)
-
-			buf := gopacket.NewSerializeBuffer()
-			opts := gopacket.SerializeOptions{
-				FixLengths:       true,
-				ComputeChecksums: true,
-			}
-
-			err = gopacket.SerializeLayers(
-				buf,
-				opts,
-				ipLayer,
-				udpLayer,
-				gopacket.Payload(replyBuffer),
-			)
-
-			if err != nil {
-				panic(err)
-			}
-
-			replyFrame := ethernet.Frame{
-				Destination: targetMac,
-				Source:      source.iface.HardwareAddr,
-				EtherType:   ethernet.EtherTypeIPv4,
-				Payload:     buf.Bytes(),
-			}
-
-			fmt.Println(replyFrame)
-
-			replyFrameBuffer, err := replyFrame.MarshalBinary()
-			if err != nil {
-				panic(err)
-			}
-
-			if _, err = udpClient.WriteTo(replyFrameBuffer, nil); err != nil {
-				panic(err)
-			}
-
-			continue
-		}
-
-		frame := ethernet.Frame{}
-		err = frame.UnmarshalBinary(readBuffer)
-		if err != nil {
-			panic(err)
-		}
-
-		frame.Source = source.iface.HardwareAddr
-		frame.Destination = gatewayMac
-
-		newFrameBuffer, err := frame.MarshalBinary()
-		if err != nil {
-			panic(err)
-		}
-
-		_, err = udpClient.WriteTo(newFrameBuffer, nil)
-		if err != nil {
-			fmt.Println(err)
-		}
-		// fmt.Printf("Forwarded %d -> %d bytes from %v\n", read, len(newFrameBuffer), addr)
+	return []mitm.PacketFilter{
+		shortFilter,
+		sourceMatchesSwitch,
+		interceptDNS,
 	}
 }
 
-func spoofGateway(source sourceInterface, targetAddr net.HardwareAddr, gatewayIP net.IP) {
-	arpClient, err := arp.Dial(&source.iface)
-	if err != nil {
-		panic(err)
-	}
-
-	// (op Operation, srcHW net.HardwareAddr, srcIP net.IP, dstHW net.HardwareAddr, dstIP net.IP)
-	packet, err := arp.NewPacket(
-		arp.OperationReply,
-		source.iface.HardwareAddr,
-		gatewayIP,
-		source.iface.HardwareAddr,
-		gatewayIP,
-	)
-
-	if err != nil {
-		panic(err)
-	}
-
-	for {
-		arpClient.WriteTo(packet, targetAddr)
-		time.Sleep(time.Second)
-	}
+func shouldInterceptPacket(packet []byte) bool {
+	// todo: better
+	lbsgBytes := []byte{0x6d, 0x63, 0x6f, 0x04, 0x6c, 0x62, 0x73, 0x67, 0x03, 0x6e, 0x65, 0x74, 0x00}
+	return bytes.Contains(packet[12:], lbsgBytes)
 }
 
-func arpEntireSubnet(ctx context.Context, source sourceInterface) {
-	ips := ipsFromCIDR(source.net)
-	arpClient, err := arp.Dial(&source.iface)
-	if err != nil {
-		panic(err)
-	}
+func injectDNSReplies(
+	ctx context.Context,
+	etherClient *raw.Conn,
+	iface net.Interface,
+	gatewayIP net.IP,
+	switchDevice findswitch.NintendoSwitch,
+	dnsChan chan []byte,
+) error {
+	for packetBuffer := <-dnsChan; ctx.Done() != nil; {
+		fmt.Println("DETECTED LBSG")
 
-	// Loop until cancelled
-	for {
-		// Scan the entire range using ARP requests
-		// Replies are collected in another goroutine
-		for _, ip := range ips {
-			// Stop scanning if cancelled
-			if ctx.Err() != nil {
-				fmt.Println("Scan cancelled")
-				return
-			}
+		dnsReq := dns.Msg{}
+		err := dnsReq.Unpack(packetBuffer[42:])
+		fmt.Println(err)
+		fmt.Println(dnsReq)
 
-			fmt.Printf("ARPing %v\n", ip)
+		dnsReply, err := createDNSReply(dnsReq, "104.219.3.4")
+		if err != nil {
+			return err
+		}
 
-			arpClient.Request(ip)
-			if err != nil {
-				panic(err)
-			}
+		replyFrameBuffer, err := createDNSReplyFrame(iface, packetBuffer, *dnsReply, gatewayIP, switchDevice)
+		if err != nil {
+			return err
+		}
 
-			// Sending too fast will cause them to drop
-			time.Sleep(25 * time.Millisecond)
+		if _, err = etherClient.WriteTo(replyFrameBuffer, nil); err != nil {
+			return err
 		}
 	}
+
+	return nil
 }
 
-func detectNintendoARP(source sourceInterface) (*foundDevice, error) {
-	arpClient, err := arp.Dial(&source.iface)
+func createDNSReply(request dns.Msg, serverIP string) (*dns.Msg, error) {
+	if len(request.Question) != 1 {
+		return nil, errors.Errorf("DNS request must have 1 question")
+	}
+
+	hostname := request.Question[0].Name
+	ttl := 15
+
+	rrString := fmt.Sprintf("%s %d IN A %s", hostname, ttl, serverIP)
+	fmt.Println(rrString)
+
+	rr, err := dns.NewRR(rrString)
 	if err != nil {
 		return nil, err
 	}
 
-	for {
-		packet, _, err := arpClient.Read()
-		if err != nil {
-			return nil, err
-		}
-
-		if packet.Operation != arp.OperationReply {
-			// Read only ARP replies
-			continue
-		}
-
-		if packet != nil {
-			fmt.Println(packet)
-			if isNintendo(packet.SenderHardwareAddr) {
-				fmt.Printf("Found %v\n", packet.SenderHardwareAddr)
-				return &foundDevice{packet.SenderHardwareAddr, packet.SenderIP}, nil
-			}
-		}
+	dnsReply := dns.Msg{
+		MsgHdr: dns.MsgHdr{
+			Id:       request.Id,
+			Response: true,
+			Opcode:   dns.OpcodeQuery,
+			Rcode:    0,
+		},
+		Question: request.Question,
+		Answer:   []dns.RR{rr},
 	}
+
+	return &dnsReply, nil
 }
 
-// Get preferred outbound ip of this machine
-func getPreferredAddr() (net.IP, error) {
-	// Doesn't actually create a connection, just prepares one
-	conn, err := net.Dial("udp", "1.1.1.1:53")
+func createDNSReplyFrame(
+	iface net.Interface,
+	originalPacket []byte,
+	dnsReply dns.Msg,
+	spoofedIP net.IP,
+	switchDevice findswitch.NintendoSwitch,
+) ([]byte, error) {
+	// Read the port that the DNS request came from, so that we can reply to it
+	sourcePortBytes := originalPacket[34:36]
+	sourcePort := binary.BigEndian.Uint16(sourcePortBytes)
+
+	// Turn the DNS reply into bytes
+	dnsReplyBuffer, err := dnsReply.Pack()
 	if err != nil {
 		return nil, err
 	}
 
-	defer conn.Close()
+	// Built the IPv4 layer
+	ipLayer := &layers.IPv4{
+		Version:  4,
+		SrcIP:    spoofedIP, // todo: read DNS server IP from packet using gopacket
+		DstIP:    switchDevice.IP,
+		TTL:      64,
+		Protocol: layers.IPProtocolUDP,
+	}
 
-	// The OS will automatically use the preferred IP
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP, nil
-}
+	// Build the UDP layer
+	udpLayer := &layers.UDP{
+		SrcPort: 53, // todo: match to request?
+		DstPort: layers.UDPPort(sourcePort),
+	}
 
-func getPreferredInterface() (*sourceInterface, error) {
-	addr, err := getPreferredAddr()
-	if err != nil {
+	// Include a checksum or else the packet will be dropped
+	udpLayer.SetNetworkLayerForChecksum(ipLayer)
+
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{
+		// Compute these fields on the fly
+		FixLengths:       true,
+		ComputeChecksums: true,
+	}
+
+	// Serialize!
+	if err = gopacket.SerializeLayers(
+		buf,
+		opts,
+		ipLayer,
+		udpLayer,
+		gopacket.Payload(dnsReplyBuffer),
+	); err != nil {
 		return nil, err
 	}
 
-	fmt.Println(addr)
-	return getInterfaceFromIP(addr.To4())
-}
-
-func getInterfaceFromIP(targetIP net.IP) (*sourceInterface, error) {
-	ifaces, _ := net.Interfaces()
-
-	// Iterate over all interfaces on the system
-	for _, iface := range ifaces {
-		addrs, _ := iface.Addrs()
-
-		// Iterate over addresses on the interface
-		for _, addr := range addrs {
-			// Parse the CIDR notation to get just the IP
-			ip, network, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				return nil, err
-			}
-
-			// Skip IPv6 addrs
-			ipv4 := ip.To4()
-			if ipv4 == nil {
-				continue
-			}
-
-			// Check if this IP ends with the target IP
-			if bytes.HasSuffix(ipv4, targetIP) {
-				return &sourceInterface{
-					iface,
-					ipv4,
-					*network,
-				}, nil
-			}
-		}
+	// Build the ethernet frame
+	// todo: replace with gopacket ethernet layer
+	replyFrame := ethernet.Frame{
+		Destination: switchDevice.MAC,
+		Source:      iface.HardwareAddr,
+		EtherType:   ethernet.EtherTypeIPv4,
+		Payload:     buf.Bytes(),
 	}
 
-	return nil, nil
-}
-
-func ipsFromCIDR(network net.IPNet) []net.IP {
-	networkIP := network.IP
-
-	var ips []net.IP
-	for ip := networkIP.Mask(network.Mask); network.Contains(ip); inc(ip) {
-		nextIP := make(net.IP, len(ip))
-		copy(nextIP, ip)
-		ips = append(ips, nextIP)
-	}
-
-	// Remove network address and broadcast address
-	lenIPs := len(ips)
-
-	// For a /32
-	if lenIPs < 2 {
-		return ips
-	}
-
-	return ips[1 : lenIPs-1]
-}
-
-func inc(ip net.IP) {
-	for j := len(ip) - 1; j >= 0; j-- {
-		ip[j]++
-		if ip[j] > 0 {
-			break
-		}
-	}
-}
-
-func isNintendo(addr net.HardwareAddr) bool {
-	mac := strings.ToUpper(addr.String())
-	mac = strings.ReplaceAll(mac, ":", "")
-	mac = mac[:6]
-
-	_, exists := macPrefixes[mac]
-	return exists
+	// Turn the frame into bytes
+	return replyFrame.MarshalBinary()
 }
