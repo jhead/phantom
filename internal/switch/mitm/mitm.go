@@ -2,6 +2,7 @@ package mitm
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 
@@ -83,12 +84,8 @@ func Sniff(
 
 		packetBytes := bigBuffer[:read]
 
-		// Iterate over filters to avoid processing irrelevant data
-		for _, filter := range filters {
-			// Skip on first filter that returns false
-			if !filter(packetBytes) {
-				continue
-			}
+		if !packetFiltersMatch(packetBytes, filters) {
+			continue
 		}
 
 		recvPackets <- Packet{
@@ -98,6 +95,17 @@ func Sniff(
 	}
 
 	return nil
+}
+
+func packetFiltersMatch(packetBytes []byte, filters []PacketFilter) bool {
+	// Iterate over filters to avoid processing irrelevant data
+	for _, filter := range filters {
+		// Skip on first filter that returns false
+		if !filter(packetBytes) {
+			return false
+		}
+	}
+	return true
 }
 
 func ForwardAll(
@@ -126,6 +134,8 @@ func ForwardAll(
 		if err != nil {
 			return err
 		}
+
+		fmt.Printf("Forwarding %d bytes to gateway\n", len(newFrameBuffer))
 
 		// Write the modified frame to the interface
 		if _, err := etherClient.WriteTo(newFrameBuffer, nil); err != nil {
