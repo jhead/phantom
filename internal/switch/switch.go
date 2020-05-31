@@ -45,7 +45,11 @@ var knownServers = map[string]bool{
 var port53Bytes = []byte{0x00, 0x35}
 
 func main() {
-	inst, _ := New()
+	inst, err := New()
+	if err != nil {
+		panic(err)
+	}
+
 	inst.Start()
 }
 

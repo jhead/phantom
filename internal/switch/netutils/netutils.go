@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
+
+	"github.com/jackpal/gateway"
+	arpcmd "github.com/mostlygeek/arp"
 )
 
 type Interface struct {
@@ -102,14 +107,31 @@ func incrementIP(ip net.IP) {
 	}
 }
 
-// todo
 func GetDefaultGateway() (net.IP, net.HardwareAddr, error) {
-	gatewayMac, err := net.ParseMAC("dc:7f:a4:0a:56:6d")
+	gatewayIP, err := gateway.DiscoverGateway()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	gatewayIP := net.ParseIP("192.168.1.254")
+	rawMacString := arpcmd.Search(gatewayIP.String())
 
-	return gatewayIP, gatewayMac, nil
+	// MAC digits might be missing leading zeros
+	macParts := strings.Split(rawMacString, ":")
+	for i, part := range macParts {
+		intValue, err := strconv.ParseUint(part, 16, 8)
+		if err != nil {
+			panic(err)
+		}
+
+		macParts[i] = fmt.Sprintf("%02x", intValue)
+	}
+
+	macString := strings.Join(macParts, ":")
+
+	gatewayMAC, err := net.ParseMAC(macString)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return gatewayIP, gatewayMAC, nil
 }
