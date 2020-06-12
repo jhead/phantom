@@ -1,6 +1,6 @@
 .PHONY: prep
 
-OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7
+OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7 bin/phantom-linux-arm8
 CMDSRC=phantom.go
 
 build: prep ${OUT}
@@ -38,6 +38,11 @@ bin/phantom-linux-arm6:
 bin/phantom-linux-arm7:
 	pushd cmd && \
 	GOOS=linux GOARCH=arm GOARM=7 go build -o ../bin/phantom-linux-arm7 ${CMDSRC} && \
+	popd
+
+bin/phantom-linux-arm8:
+	pushd cmd && \
+	GOOS=linux GOARCH=arm64 go build -o ../bin/phantom-linux-arm8 ${CMDSRC} && \
 	popd
 
 prep:
