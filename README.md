@@ -27,8 +27,9 @@ Just replace `<os>` with macos, linux, etc. for the correct OS you're using.
 ## Usage
 
 Open up a command prompt (Windows) or terminal (macOS & Linux) to the location
-where you downloaded it, then the server should show up on your LAN list within
-a few seconds. If not, you did something wrong. Or I did ;)
+where you downloaded phantom, then type in the phantom command and hit enter.
+The server should show up on your LAN server list within a few seconds. If not,
+you did something wrong. Or I did ;)
 
 ```
 Usage: ./phantom-<os> [options] -server <server-ip>
@@ -48,6 +49,34 @@ Options:
     	Required: Bedrock/MCPE server IP address and port (ex: 1.2.3.4:19132)
   -timeout int
     	Optional: Seconds to wait before cleaning up a disconnected client (default 60)
+```
+
+**Example**
+
+Connect to a server at IP `lax.mcbr.cubed.host` port `19132`:
+
+```bash
+./phantom-<os> -server lax.mcbr.cubed.host:19132
+```
+
+![fVoNSdU](https://user-images.githubusercontent.com/360153/85956959-18003880-b93e-11ea-811e-424b33b98528.png)
+
+Same as above but bind to a specific local IP:
+
+```bash
+./phantom-<os> -bind 10.0.0.5 -server lax.mcbr.cubed.host:19132
+```
+
+Same as above but bind the proxy server to port 19133:
+   
+```bash
+./phantom-<os> -bind_port 19133 -server lax.mcbr.cubed.host:19132
+```
+
+Same as above but bind the proxy server to local IP 10.0.0.5 and port 19133:
+   
+```bash
+./phantom-<os> -bind 10.0.0.5 -bind_port 19133 -server lax.mcbr.cubed.host:19132
 ```
 
 **Running multiple instances**
@@ -80,32 +109,6 @@ to the bind port for phantom to work.
 
 This flag can be used with or without the `-bind` flag. 
 Default value is 0, which means a random port will be used.
-
-**Example**
-
-Connect to a server at IP `lax.mcbr.cubed.host` port `19132`:
-
-```bash
-$ ./phantom-<os> -server lax.mcbr.cubed.host:19132
-```
-
-Same as above but bind to a specific local IP:
-
-```bash
-$ ./phantom-<os> -bind 10.0.0.5 -server lax.mcbr.cubed.host:19132
-```
-
-Same as above but bind the proxy server to port 19133:
-   
-```bash
-$ ./phantom-<os> -bind_port 19133 -server lax.mcbr.cubed.host:19132
-```
-
-Same as above but bind the proxy server to local IP 10.0.0.5 and port 19133:
-   
-```bash
-$ ./phantom-<os> -bind 10.0.0.5 -bind_port 19133 -server lax.mcbr.cubed.host:19132
-```
 
 ## Building
 
