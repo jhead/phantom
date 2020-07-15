@@ -39,6 +39,7 @@ type ProxyPrefs struct {
 	IdleTimeout  time.Duration
 	EnableIPv6   bool
 	RemovePorts  bool
+	NumWorkers   uint
 }
 
 var randSource = rand.NewSource(time.Now().UnixNano())
@@ -125,7 +126,7 @@ func (proxy *ProxyServer) Start() error {
 	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
 
 	// Start processing everything else using the proxy listener
-	proxy.readLoop(proxy.server)
+	proxy.startWorkers(proxy.server)
 
 	return nil
 }
@@ -148,9 +149,23 @@ func (proxy *ProxyServer) Close() {
 	proxy.dead.Set()
 }
 
+func (proxy *ProxyServer) startWorkers(listener net.PacketConn) {
+	log.Info().Msgf("Starting %d workers", proxy.prefs.NumWorkers)
+
+	for i := uint(0); i < proxy.prefs.NumWorkers; i++ {
+		if i < proxy.prefs.NumWorkers-1 {
+			go proxy.readLoop(listener)
+		} else {
+			proxy.readLoop(listener)
+		}
+	}
+}
+
 // Continually reads data from the provided listener and passes it to
 // processDataFromClients until the ProxyServer has been closed.
 func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
+	log.Info().Msgf("Listener starting up: %s", listener.LocalAddr())
+
 	packetBuffer := make([]byte, maxMTU)
 
 	for !proxy.dead.IsSet() {

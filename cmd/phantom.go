@@ -27,6 +27,7 @@ func main() {
 	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
 	ipv6Arg := flag.Bool("6", false, "Optional: Enables IPv6 support on port 19133 (experimental)")
 	removePortsArg := flag.Bool("remove_ports", false, "Optional: Forces ports to be excluded from pong packets (experimental)")
+	workersArg := flag.Uint("workers", 1, "Optional: Number of workers, useful for tweaking performance (experimental)")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -66,6 +67,7 @@ func main() {
 		idleTimeout,
 		*ipv6Arg,
 		*removePortsArg,
+		*workersArg,
 	})
 
 	if err != nil {
