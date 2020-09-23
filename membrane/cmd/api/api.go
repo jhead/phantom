@@ -4,15 +4,22 @@ import (
 	"fmt"
 
 	"github.com/jhead/phantom/membrane/internal/services/api"
+	"github.com/jhead/phantom/membrane/internal/services/db"
 	"github.com/jhead/phantom/membrane/internal/services/db/jsondb"
 	"github.com/jhead/phantom/membrane/internal/services/servers"
 	"github.com/rs/zerolog/log"
 )
 
-func Start() {
+// NativePersistence provides a way to store/retrieve data in
+// native platform-specific code.
+type NativePersistence interface {
+	db.Persistence
+}
+
+func Start(persist NativePersistence) {
 	fmt.Println("Starting up in API server mode")
 
-	database, err := jsondb.New("./phantom.json")
+	database, err := jsondb.New(persist)
 	if err != nil {
 		log.Fatal().Err(err).Msgf("Failed to open database")
 		return

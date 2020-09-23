@@ -13,3 +13,8 @@ type Database interface {
 	// Settings
 	GetSettings() (model.Settings, error)
 }
+
+type Persistence interface {
+	ReadData() (string, error)
+	StoreData(data string) error
+}

@@ -29,10 +29,9 @@ import PhantomMembrane from 'react-native-phantom-membrane';
 const App: () => React$Node = () => {
   const [result, setResult] = React.useState(0);
 
-  console.log(PhantomMembrane);
   React.useEffect(() => {
     PhantomMembrane.start();
-    setResult(1000);
+    setResult(123);
   }, []);
 
   return (

@@ -1,7 +1,7 @@
 import { NativeModules } from 'react-native';
 
 type PhantomMembraneType = {
-  multiply(a: number, b: number): Promise<number>;
+  start(): void;
 };
 
 const { PhantomMembrane } = NativeModules;
