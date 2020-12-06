@@ -15,6 +15,7 @@ import (
 var bindAddressString string
 var serverAddressString string
 var bindPortInt uint16
+var pingBindPortInt uint16
 
 func main() {
 	// Required
@@ -22,7 +23,8 @@ func main() {
 
 	// Optional
 	bindArg := flag.String("bind", "0.0.0.0", "Optional: IP address to listen on. Defaults to all interfaces.")
-	bindPortArg := flag.Int("bind_port", 0, "Optional: Port to listen on. Defaults to 0, which selects a random port.\nNote that phantom always binds to port 19132 as well, so both ports need to be open.")
+	bindPortArg := flag.Int("bind_port", 0, "Optional: Port to listen on. Defaults to 0, which selects a random port.\nNote that phantom always binds to port 19132 (by default, change with ping_bind_port flag) as well, so both ports need to be open.")
+	pingBindPortArg := flag.Int("ping_bind_port", 19132, "Optional: Ping port to listen on, defaults to 19132. \nTypically change this only when you need bind_port to be 19132.")
 	timeoutArg := flag.Int("timeout", 60, "Optional: Seconds to wait before cleaning up a disconnected client")
 	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
 	ipv6Arg := flag.Bool("6", false, "Optional: Enables IPv6 support on port 19133 (experimental)")
@@ -47,6 +49,7 @@ func main() {
 	serverAddressString = *serverArg
 	idleTimeout := time.Duration(*timeoutArg) * time.Second
 	bindPortInt = uint16(*bindPortArg)
+	pingBindPortInt = uint16(*pingBindPortArg)
 
 	logLevel := zerolog.InfoLevel
 	if *debugArg {
@@ -63,6 +66,7 @@ func main() {
 	proxyServer, err := proxy.New(proxy.ProxyPrefs{
 		bindAddressString,
 		bindPortInt,
+		pingBindPortInt,
 		serverAddressString,
 		idleTimeout,
 		*ipv6Arg,

@@ -35,6 +35,7 @@ type ProxyServer struct {
 type ProxyPrefs struct {
 	BindAddress  string
 	BindPort     uint16
+	PingBindPort uint16
 	RemoteServer string
 	IdleTimeout  time.Duration
 	EnableIPv6   bool
@@ -82,10 +83,11 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 }
 
 func (proxy *ProxyServer) Start() error {
-	// Bind to 19132 on all addresses to receive broadcasted pings
+	// Bind to 19132 (default) on all addresses to receive broadcasted pings
 	// Sets SO_REUSEADDR et al to support multiple instances of phantom
-	log.Info().Msgf("Binding ping server to port 19132")
-	if pingServer, err := reuse.ListenPacket("udp4", ":19132"); err == nil {
+	log.Info().Msgf("Binding ping server to port %d", proxy.prefs.PingBindPort)
+	pingBindPort := fmt.Sprintf(":%d", proxy.prefs.PingBindPort)
+	if pingServer, err := reuse.ListenPacket("udp4", pingBindPort); err == nil {
 		proxy.pingServer = pingServer
 
 		// Start proxying ping packets from the broadcast listener
