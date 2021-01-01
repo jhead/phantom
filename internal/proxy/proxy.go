@@ -116,8 +116,9 @@ func (proxy *ProxyServer) Start() error {
 
 	// Bind to specified UDP addr and port to receive data from Minecraft clients
 	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
-	if server, err := net.ListenUDP(network, proxy.bindAddress); err == nil {
-		proxy.server = server
+	if server, err := reuse.ListenPacket(network, proxy.bindAddress.String()); err == nil {
+		// a safe cast, I promise
+		proxy.server = server.(*net.UDPConn)
 	} else {
 		return err
 	}
