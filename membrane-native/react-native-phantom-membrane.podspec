@@ -10,12 +10,11 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.authors      = package["author"]
 
-  s.platform     = :ios, "12.0"
+  s.platform     = :ios, "10.0"
   s.source       = { :git => "https://github.com/jhead/phantom.git", :tag => "#{s.version}" }
-
   
   s.source_files = "ios/*.{h,m,mm,swift}"
   s.vendored_frameworks = "ios/Membrane.framework"
 
-  s.dependency "React"
+  s.dependency "React-Core"
 end

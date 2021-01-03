@@ -15,6 +15,7 @@ class PhantomMembrane: NSObject {
 
 class PhantomDataPersistence : NSObject, MembraneNativePersistenceProtocol {
     
+    private static let writingOptions = Data.WritingOptions.atomic
     private static let filename = "phantom.json"
     static let `default`: PhantomDataPersistence = PhantomDataPersistence()
     
@@ -54,12 +55,12 @@ class PhantomDataPersistence : NSObject, MembraneNativePersistenceProtocol {
             throw Error.invalidDirectory
         }
         
-        if fileManager.fileExists(atPath: url.absoluteString) {
-            throw Error.fileAlreadyExists
-        }
-        
         do {
-            try data.write(to: url)
+            if fileManager.fileExists(atPath: url.absoluteString) {
+                try data.write(to: url, options: PhantomDataPersistence.writingOptions)
+            } else {
+                fileManager.createFile(atPath: url.absoluteString, contents: data)
+            }
         } catch {
             debugPrint(error)
             throw Error.writtingFailed

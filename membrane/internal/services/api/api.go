@@ -46,9 +46,9 @@ func New(opt model.Settings, servers servers.ServerManagement) Service {
 	registerRoute(app.Get, "/api", api.helloEndpoint)
 	registerRoute(app.Get, "/api/servers", api.listServersEndpoint)
 	registerRoute(app.Get, "/api/servers/:id", api.getServerEndpoint)
-	registerRoute(app.Post, "/api/servers/:id", api.createServerEndpoint)
-	registerRoute(app.Post, "/api/servers/:id/start", api.startServerEndpoint)
-	registerRoute(app.Post, "/api/servers/:id/stop", api.stopServerEndpoint)
+	registerRoute(app.Put, "/api/servers/:id", api.createServerEndpoint)
+	registerRoute(app.Put, "/api/servers/:id/start", api.startServerEndpoint)
+	registerRoute(app.Put, "/api/servers/:id/stop", api.stopServerEndpoint)
 	registerRoute(app.Delete, "/api/servers/:id", api.deleteServerEndpoint)
 
 	return api
