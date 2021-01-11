@@ -4,6 +4,8 @@ import { apiHost } from '../env'
 const Endpoints = {
   BASE: '/api',
   SERVERS: 'servers',
+  SERVERS_START: 'start',
+  SERVERS_STOP: 'stop'
 }
 
 const url = (...endpoints: string[]) =>
@@ -59,6 +61,18 @@ class Servers implements Service<ServerEntry, string> {
 
   update(id: string, item: ServerEntry): Promise<void> {
     throw new Error('Method not implemented.')
+  }
+
+  async start(id: string): Promise<void> {
+    await fetch(url(Endpoints.SERVERS, id, Endpoints.SERVERS_START), {
+      method: 'PUT'
+    })
+  }
+
+  async stop(id: string): Promise<void> {
+    await fetch(url(Endpoints.SERVERS, id, Endpoints.SERVERS_STOP), {
+      method: 'PUT'
+    })
   }
 
 }
