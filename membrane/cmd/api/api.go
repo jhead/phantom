@@ -21,19 +21,19 @@ func Start(persist NativePersistence) {
 
 	database, err := jsondb.New(persist)
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to open database")
+		log.Error().Err(err).Msgf("Failed to open database")
 		return
 	}
 
 	settings, err := database.GetSettings()
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to load settings")
+		log.Error().Err(err).Msgf("Failed to load settings")
 		return
 	}
 
 	apiService := api.New(settings, servers.New(database))
 
 	if err := apiService.Start(); err != nil {
-		log.Fatal().Msgf("Failed to start API server: %v", err)
+		log.Error().Msgf("Failed to start API server: %v", err)
 	}
 }

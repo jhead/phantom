@@ -1,24 +1,47 @@
-/**
- * @format
- */
 import { Navigation } from "react-native-navigation";
-import App from './src/App';
+import HomeScreen from './src/screens/home';
+import { Colors } from "./src/styles";
+import bottomTabs from './src/tabs';
+import PhantomMemberane from 'react-native-phantom-membrane';
 
-const root = 'io.jxh.phantom.Home';
-Navigation.registerComponent(root, () => App);
+PhantomMemberane.start()
+
+Navigation.registerComponent('HOME_SCREEN', () => HomeScreen);
 
 Navigation.events().registerAppLaunchedListener(() => {
-    Navigation.setRoot({
-        root: {
-        stack: {
-            children: [
-            {
-                component: {
-                name: root
-                }
+  Navigation.setRoot({
+    root: {
+      stack: {
+        children: [
+          {
+            component: {
+              name: 'HOME_SCREEN'
             }
-            ]
-        }
-        }
-    });
+          }
+        ]
+      },
+      bottomTabs
+    }
+  });
+});
+
+Navigation.setDefaultOptions({
+  statusBar: {
+    translucent: true,
+    blur: true
+  },
+  topBar: {
+    noBorder: true,
+    background: {
+      color: Colors.backgroundDark,
+      // translucent: true,
+      // blur: true
+    },
+    leftButtonColor: Colors.selectedText,
+    rightButtonColor: Colors.selectedText
+  },
+  bottomTabs: {
+    backgroundColor: 'black',
+    hideShadow: true
+  }
 });

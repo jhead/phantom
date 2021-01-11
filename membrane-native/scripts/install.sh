@@ -38,6 +38,7 @@ function bindMembrane {
     fi
     popd
 
+    mkdir -p ios
     rm -rfv ios/${libName}
     mv ${MEMBRANE_GOPATH}/${libName} ios/
 }

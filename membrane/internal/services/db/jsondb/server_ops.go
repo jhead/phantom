@@ -41,7 +41,11 @@ func (database Database) CreateServer(server model.Server) error {
 		return err
 	}
 
-	if _, exists := contents.Servers[server.ID]; exists {
+	// Init map if null
+	if contents.Servers == nil {
+		contents.Servers = make(map[string]model.Server)
+	} else if _, exists := contents.Servers[server.ID]; exists {
+		// Check if server exists
 		return model.ServerExistsError
 	}
 
