@@ -21,8 +21,9 @@ class PhantomDataPersistence : NSObject, MembraneNativePersistenceProtocol {
     
     enum Error: Swift.Error {
         case fileAlreadyExists
-        case invalidDirectory
+        case invalidFilePath
         case writtingFailed
+        case readingFailed
     }
     
     let fileManager: FileManager
@@ -52,15 +53,11 @@ class PhantomDataPersistence : NSObject, MembraneNativePersistenceProtocol {
     
     private func save(fileNamed: String, data: Data) throws {
         guard let url = makeURL(forFileNamed: fileNamed) else {
-            throw Error.invalidDirectory
+            throw Error.invalidFilePath
         }
         
         do {
-            if fileManager.fileExists(atPath: url.absoluteString) {
-                try data.write(to: url, options: PhantomDataPersistence.writingOptions)
-            } else {
-                fileManager.createFile(atPath: url.absoluteString, contents: data)
-            }
+            try data.write(to: url.absoluteURL, options: PhantomDataPersistence.writingOptions)
         } catch {
             debugPrint(error)
             throw Error.writtingFailed
@@ -69,18 +66,14 @@ class PhantomDataPersistence : NSObject, MembraneNativePersistenceProtocol {
     
     private func read(fileNamed: String) throws -> String {
         guard let url = makeURL(forFileNamed: fileNamed) else {
-            throw Error.invalidDirectory
-        }
-        
-        if fileManager.fileExists(atPath: url.absoluteString) {
-            throw Error.fileAlreadyExists
+            throw Error.invalidFilePath
         }
         
         do {
-            return try String(contentsOf: url, encoding: .utf8)
+            return try String(contentsOf: url.absoluteURL, encoding: .utf8)
         } catch {
             debugPrint(error)
-            throw error
+            throw Error.readingFailed
         }
     }
     
