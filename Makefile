@@ -1,7 +1,7 @@
 SHELL=/bin/bash
 .PHONY: prep
 
-OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7 bin/phantom-linux-arm8
+OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-macos-arm8 bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7 bin/phantom-linux-arm8
 CMDSRC=phantom.go
 
 build: prep ${OUT}
@@ -19,6 +19,11 @@ bin/phantom-windows-32bit.exe:
 bin/phantom-macos:
 	pushd cmd && \
 	GOOS=darwin GOARCH=amd64 go build -o ../bin/phantom-macos ${CMDSRC} && \
+	popd
+
+bin/phantom-macos-arm8:
+	pushd cmd && \
+	GOOS=darwin GOARCH=arm64 go build -o ../bin/phantom-macos-arm8 ${CMDSRC} && \
 	popd
 
 bin/phantom-linux:
