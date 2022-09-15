@@ -1,4 +1,4 @@
-[![Downloads](https://img.shields.io/github/downloads/6jarjar6/phantom/total)](https://github.com/6jarjar6/phantom/releases) [![Gitter](https://badges.gitter.im/phantom-minecraft/community.svg)](https://gitter.im/phantom-minecraft/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
+[![Downloads](https://img.shields.io/github/downloads/6jarjar6/phantom/total)](https://github.com/6jarjar6/phantom/releases)
 
 # phantom
 
