@@ -3,7 +3,7 @@ module github.com/jhead/phantom
 go 1.19
 
 require (
-	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
+	github.com/golang/glog v1.0.0
 	github.com/libp2p/go-reuseport v0.2.0
 	github.com/rs/zerolog v1.28.0
 	github.com/stretchr/testify v1.7.0
