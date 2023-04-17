@@ -3,7 +3,7 @@ version: '3'
 
 services:
   phantom:
-    image: andybroger/phantom:latest
+    image: ghcr.io/andybroger/phantom:latest
     restart: always
     ports:
       - "19132:19132/udp" # this is always needed
