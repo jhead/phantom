@@ -1,11 +1,12 @@
-# phantom docker image
+# phantom - bedrock proxy for xbox & ps
 
-Phantom docker image based on alpine linux.
+This docker images simulates a LAN Server and proxies the packets to the real server.
+Xbox & playstation user will see them as LAN Servers in the Serverlist.
 
 ## Run container with docker
 
 ```bash
-docker run --env "SERVER=172.17.17.88:19132" --network host phantom
+docker run -d --env "SERVER=172.17.17.88:19132" --network host phantom
 ```
 
 ## Run with docker compose
@@ -27,3 +28,7 @@ services:
 ```bash
 docker build . -t phantom:latest
 ```
+
+## Credits
+
+Thanks to [Justin Head](https://github.com/jhead/phantom) for developing the phantom proxy!
