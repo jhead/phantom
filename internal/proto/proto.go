@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jhead/phantom/internal/util"
+	"github.com/andybroger/phantom/internal/util"
 )
 
 var UnconnectedPingID byte = 0x01

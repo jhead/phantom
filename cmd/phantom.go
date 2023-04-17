@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/jhead/phantom/internal/proxy"
+	"github.com/andybroger/phantom/internal/proxy"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -61,13 +61,13 @@ func main() {
 		Level(logLevel)
 
 	proxyServer, err := proxy.New(proxy.ProxyPrefs{
-		bindAddressString,
-		bindPortInt,
-		serverAddressString,
-		idleTimeout,
-		*ipv6Arg,
-		*removePortsArg,
-		*workersArg,
+		BindAddress:  bindAddressString,
+		BindPort:     bindPortInt,
+		RemoteServer: serverAddressString,
+		IdleTimeout:  idleTimeout,
+		EnableIPv6:   *ipv6Arg,
+		RemovePorts:  *removePortsArg,
+		NumWorkers:   *workersArg,
 	})
 
 	if err != nil {

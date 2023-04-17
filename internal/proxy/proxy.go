@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/jhead/phantom/internal/clientmap"
-	"github.com/jhead/phantom/internal/proto"
+	"github.com/andybroger/phantom/internal/clientmap"
+	"github.com/andybroger/phantom/internal/proto"
 	"github.com/rs/zerolog/log"
 	"github.com/tevino/abool"
 
@@ -59,12 +59,12 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 
 	bindAddress, err := net.ResolveUDPAddr("udp", prefs.BindAddress)
 	if err != nil {
-		return nil, fmt.Errorf("Invalid bind address: %s", err)
+		return nil, fmt.Errorf("invalid bind address: %s", err)
 	}
 
 	remoteServerAddress, err := net.ResolveUDPAddr("udp", prefs.RemoteServer)
 	if err != nil {
-		return nil, fmt.Errorf("Invalid server address: %s", err)
+		return nil, fmt.Errorf("invalid server address: %s", err)
 	}
 
 	return &ProxyServer{
