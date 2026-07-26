@@ -53,6 +53,7 @@ type ProxyPrefs struct {
 
 var randSource = rand.NewSource(time.Now().UnixNano())
 var serverID = randSource.Int63()
+var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
 // isOfflineError reports whether err indicates the remote Bedrock server is
 // unreachable. Connected UDP sockets surface ICMP port-unreachable as
