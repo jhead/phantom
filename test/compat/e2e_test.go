@@ -57,6 +57,54 @@ func startPair(t *testing.T, up fakeserver.Opts, po Opts) (*fakeserver.Server, *
 	return srv, Start(t, po)
 }
 
+// TestUpstreamPingsAreWellFormed checks the one packet phantom originates
+// rather than relays.
+//
+// The layout is re-derived here from corpus.Magic rather than borrowed from
+// phantom's parser on purpose. A ping puts the magic *before* the client GUID,
+// the reverse of a pong, and phantom once had those swapped in its background
+// health probe. Permissive servers answered anyway, so the only symptom was
+// phantom declaring healthy PocketMine and Nukkit servers offline forever.
+func TestUpstreamPingsAreWellFormed(t *testing.T) {
+	const motd = "MCPE;Probe Shape;800;1.21.80;0;10;123;Sub;Survival;1;19132;19133;"
+
+	srv, p := startPair(t, fakeserver.Opts{MOTD: motd}, Opts{})
+
+	if _, err := p.Ping(); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+
+	// magicAt is where the offline magic must sit in a ping: after the packet
+	// ID (1) and the ping time (8).
+	const magicAt = 9
+
+	seen := 0
+	for _, datagram := range srv.Received() {
+		if len(datagram) == 0 {
+			continue
+		}
+		if datagram[0] != corpus.PingID && datagram[0] != corpus.PingOpenID {
+			continue
+		}
+		seen++
+
+		if len(datagram) < magicAt+len(corpus.Magic) {
+			t.Errorf("phantom sent a %d-byte ping, too short to hold the magic", len(datagram))
+			continue
+		}
+		if got := datagram[magicAt : magicAt+len(corpus.Magic)]; !bytes.Equal(got, corpus.Magic) {
+			t.Errorf(
+				"phantom sent a ping with magic %x at offset %d, want %x; servers that "+
+					"validate the magic (RakLib/PocketMine, Nukkit) drop this silently",
+				got, magicAt, corpus.Magic)
+		}
+	}
+
+	if seen == 0 {
+		t.Fatalf("upstream never saw a ping from phantom\n--- output ---\n%s", p.Output())
+	}
+}
+
 // TestPongPassesThroughUpstreamFields is invariant 1: everything except the
 // server id and the ports must reach the client exactly as the upstream sent it.
 func TestPongPassesThroughUpstreamFields(t *testing.T) {

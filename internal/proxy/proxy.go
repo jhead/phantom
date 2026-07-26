@@ -36,6 +36,17 @@ const udpRecvBufferSize = 65535
 // timeout must not flip the whole proxy "offline" (#104).
 const offlineTimeoutThreshold = 3
 
+// upstreamSessionTimeout bounds how long a gameplay session waits for the
+// remote to say anything before the socket is reaped.
+//
+// It must stay comfortably above RakNet's keepalive cadence. Bedrock sends a
+// connected ping every 5s and gives up on a peer after ~10s of silence, so a 5s
+// deadline sat exactly on the keepalive boundary: a quiet moment mid-session
+// could reap a live client's socket, and the client's next packet would arrive
+// at the remote from a brand new source port that its connection table does not
+// know. Idle clients are still cleaned up by ClientMap's IdleTimeout.
+const upstreamSessionTimeout = 15 * time.Second
+
 var idleCheckInterval = 5 * time.Second
 
 // Discovery probe deadlines (nanoseconds). Stored atomically so tests can shorten
@@ -44,12 +55,16 @@ var (
 	discoveryPingTimeoutNanos          atomic.Int64
 	discoveryRecoveryProbeTimeoutNanos atomic.Int64
 	discoveryHealthIntervalNanos       atomic.Int64
+	discoveryPongCacheTTLNanos         atomic.Int64
 )
 
 func init() {
 	discoveryPingTimeoutNanos.Store(int64(1500 * time.Millisecond))
 	discoveryRecoveryProbeTimeoutNanos.Store(int64(500 * time.Millisecond))
 	discoveryHealthIntervalNanos.Store(int64(2 * time.Second))
+	// Matches the health-check interval, so the background probe alone keeps
+	// discovery answerable and player counts stay at most one interval stale.
+	discoveryPongCacheTTLNanos.Store(int64(2 * time.Second))
 }
 
 func discoveryPingTimeout() time.Duration {
@@ -62,6 +77,10 @@ func discoveryRecoveryProbeTimeout() time.Duration {
 
 func discoveryHealthInterval() time.Duration {
 	return time.Duration(discoveryHealthIntervalNanos.Load())
+}
+
+func discoveryPongCacheTTL() time.Duration {
+	return time.Duration(discoveryPongCacheTTLNanos.Load())
 }
 
 type ProxyServer struct {
@@ -78,6 +97,10 @@ type ProxyServer struct {
 	serverOffline       bool
 	offlineTimeouts     int
 	serverID            int64
+
+	pongMu       sync.Mutex
+	lastPong     []byte
+	lastPongTime time.Time
 }
 
 type ProxyPrefs struct {
@@ -93,7 +116,6 @@ type ProxyPrefs struct {
 	DisableDiscoveryListener bool
 }
 
-var randSource = rand.NewSource(time.Now().UnixNano())
 var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
 // isOfflineError reports whether err indicates the remote Bedrock server is
@@ -117,9 +139,11 @@ func isOfflineError(err error) bool {
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	bindPort := prefs.BindPort
 
-	// Randomize port if not provided
+	// Randomize port if not provided. rand's top-level source is goroutine-safe
+	// and auto-seeded; a bare rand.NewSource is neither, and New is called once
+	// per -server value.
 	if bindPort == 0 {
-		bindPort = (uint16(randSource.Int63()) % 14000) + 50000
+		bindPort = uint16(rand.Intn(14000)) + 50000
 	}
 
 	// Format full bind address with port
@@ -142,7 +166,7 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		clientMap:           clientmap.New(prefs.IdleTimeout, idleCheckInterval),
 		prefs:               prefs,
 		dead:                abool.New(),
-		serverID:            randSource.Int63(),
+		serverID:            rand.Int63(),
 	}, nil
 }
 
@@ -201,6 +225,20 @@ func (proxy *ProxyServer) listen() error {
 		return err
 	}
 	proxy.server.Store(proxyServer)
+
+	// Pongs go out over the data socket so consoles learn phantom's data port
+	// from the reply's source address. A wildcard bind gives Go a dual-stack
+	// socket, so that works for IPv6 discovery too; an explicit IPv4 bind does
+	// not, and every v6 pong then fails with an address-family error that says
+	// nothing about the cause.
+	if proxy.prefs.EnableIPv6 {
+		if local, ok := proxyServer.LocalAddr().(*net.UDPAddr); ok && local.IP.To4() != nil {
+			log.Warn().Msgf(
+				"IPv6 discovery is enabled but the data socket is bound to IPv4 %s; "+
+					"IPv6 clients will not be able to reach it. Use the default -bind 0.0.0.0 for dual-stack.",
+				local.IP)
+		}
+	}
 
 	// Learn offline/online before the first console ping, and recover without
 	// making OfflinePong wait on a synchronous probe.
@@ -285,7 +323,7 @@ func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) erro
 	if from == nil {
 		return fmt.Errorf("nil client address")
 	}
-	if len(data) < 1 || !proto.IsUnconnectedDiscoveryPing(data[0]) {
+	if !proto.IsUnconnectedPing(data) {
 		return fmt.Errorf("not an unconnected ping")
 	}
 	return proxy.handleDiscoveryPing(from, data)
@@ -361,7 +399,11 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	// console re-pings keep refreshing SetReadDeadline + idle lastActive, so
 	// the session never expires and the server vanishes from LAN until restart
 	// (GitHub #117).
-	if len(data) >= 1 && proto.IsUnconnectedDiscoveryPing(data[0]) {
+	//
+	// The magic is checked, not just the packet ID: anything that only looks
+	// like a ping is left alone and relayed upstream like any other datagram,
+	// so garbage cannot divert data-plane traffic into a discovery probe.
+	if proto.IsUnconnectedPing(data) {
 		return proxy.handleDiscoveryPing(client, data)
 	}
 
@@ -381,8 +423,8 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 		return err
 	}
 
-	// Wait 5 seconds for the server to respond to whatever we sent, or else timeout
-	_ = serverConn.SetReadDeadline(time.Now().Add(time.Second * 5))
+	// Bound how long we wait for the server to say anything at all.
+	_ = serverConn.SetReadDeadline(time.Now().Add(upstreamSessionTimeout))
 
 	// Write packet from client to server
 	_, err = serverConn.Write(data)
@@ -449,8 +491,9 @@ func (proxy *ProxyServer) noteUpstreamReadError(err error) {
 	}
 }
 
-// handleDiscoveryPing answers a console/LAN Unconnected Ping using a fresh
-// probe to the remote server, independent of any gameplay session.
+// handleDiscoveryPing answers a console/LAN Unconnected Ping from a recent
+// upstream pong, probing the remote on a fresh socket when there isn't one.
+// Either way this is independent of any gameplay session.
 func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) error {
 	log.Info().Msgf("Received LAN ping from client: %s", client.String())
 
@@ -471,18 +514,29 @@ func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) erro
 		return nil
 	}
 
-	pong, err := proxy.probeRemoteUnconnectedPong(ping)
-	if err != nil {
-		proxy.markServerOffline()
-		if _, werr := server.WriteTo(proxy.buildOfflinePong(ping), client); werr != nil {
-			return werr
+	// Consoles re-ping about once a second, and every console on the LAN pings
+	// independently. Without this, each of those became its own upstream probe
+	// on its own fresh socket, so phantom's ping rate at the remote scaled with
+	// the number of consoles. A recent pong answers all of them.
+	pong, cached := proxy.cachedPong()
+	if !cached {
+		var err error
+		pong, err = proxy.probeRemoteUnconnectedPong(ping)
+		if err != nil {
+			proxy.markServerOffline()
+			if _, werr := server.WriteTo(proxy.buildOfflinePong(ping), client); werr != nil {
+				return werr
+			}
+			log.Info().Msgf("Sent server offline pong to client: %v", client.String())
+			return nil
 		}
-		log.Info().Msgf("Sent server offline pong to client: %v", client.String())
-		return nil
 	}
 
 	proxy.noteUpstreamReachable()
 
+	// Clients time their latency from the echoed ping time, so a pong served
+	// from cache has to carry this client's value rather than the probe's.
+	pong = stampPingTime(pong, ping)
 	pong = proxy.rewriteUnconnectedPong(pong)
 	if _, err := server.WriteTo(pong, client); err != nil {
 		return err
@@ -515,7 +569,7 @@ func (proxy *ProxyServer) probeUpstreamHealth() {
 	if proxy.dead.IsSet() || proxy.dataConn() == nil {
 		return
 	}
-	_, err := proxy.probeRemoteUnconnectedPong(healthCheckPing())
+	_, err := proxy.probeRemoteUnconnectedPong(proxy.healthCheckPing())
 	if err != nil {
 		proxy.markServerOffline()
 		return
@@ -523,15 +577,22 @@ func (proxy *ProxyServer) probeUpstreamHealth() {
 	proxy.noteUpstreamReachable()
 }
 
-// healthCheckPing is a minimal valid Unconnected Ping for background probes.
-func healthCheckPing() []byte {
-	magic := []byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78}
-	out := make([]byte, 0, 1+8+8+16)
-	out = append(out, proto.UnconnectedPingID)
-	out = append(out, 0, 0, 0, 0, 0, 0, 0, 0) // ping time
-	out = append(out, 0, 0, 0, 0, 0, 0, 0, 0) // client GUID
-	out = append(out, magic...)
-	return out
+// healthCheckPing is a well-formed Unconnected Ping for background probes.
+//
+// The field order matters. RakNet puts the magic *before* the client GUID in a
+// ping (the reverse of a pong), and implementations that validate the magic —
+// RakLib/PocketMine and Nukkit among them — drop anything with it in the wrong
+// place. A malformed probe here is invisible: the health check simply never
+// gets a pong, the proxy latches "offline", and every LAN discovery ping is
+// answered with OfflinePong even though the server is up and reachable.
+func (proxy *ProxyServer) healthCheckPing() []byte {
+	var pingTime [8]byte
+	binary.BigEndian.PutUint64(pingTime[:], uint64(time.Now().UnixMilli()))
+
+	var guid [8]byte
+	binary.BigEndian.PutUint64(guid[:], uint64(proxy.serverID))
+
+	return proto.BuildUnconnectedPing(pingTime[:], guid[:])
 }
 
 // probeRemoteUnconnectedPong dials a one-shot UDP socket to the remote and
@@ -569,8 +630,63 @@ func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error
 		}
 		out := make([]byte, n)
 		copy(out, buf[:n])
+		proxy.recordPong(out)
 		return out, nil
 	}
+}
+
+// recordPong remembers the newest upstream pong. It backs both the discovery
+// cache and the offline advertisement.
+func (proxy *ProxyServer) recordPong(pong []byte) {
+	// Only keep pongs phantom can actually parse; a frame it cannot read is no
+	// use as an offline template and must not be replayed to other clients.
+	if _, err := proto.ReadUnconnectedPing(pong); err != nil {
+		return
+	}
+	proxy.pongMu.Lock()
+	defer proxy.pongMu.Unlock()
+	// Store a copy: callers stamp their client's ping time into the frame they
+	// were handed, and the cached entry must not move under them.
+	proxy.lastPong = append([]byte(nil), pong...)
+	proxy.lastPongTime = time.Now()
+}
+
+// cachedPong returns a copy of the last upstream pong if it is fresh enough to
+// answer a discovery ping with.
+func (proxy *ProxyServer) cachedPong() ([]byte, bool) {
+	ttl := discoveryPongCacheTTL()
+	if ttl <= 0 {
+		return nil, false
+	}
+
+	proxy.pongMu.Lock()
+	defer proxy.pongMu.Unlock()
+
+	if proxy.lastPong == nil || time.Since(proxy.lastPongTime) > ttl {
+		return nil, false
+	}
+	return append([]byte(nil), proxy.lastPong...), true
+}
+
+// lastKnownPong returns a copy of the most recent upstream pong regardless of
+// age, or nil if the remote has never answered.
+func (proxy *ProxyServer) lastKnownPong() []byte {
+	proxy.pongMu.Lock()
+	defer proxy.pongMu.Unlock()
+
+	if proxy.lastPong == nil {
+		return nil
+	}
+	return append([]byte(nil), proxy.lastPong...)
+}
+
+// stampPingTime writes the client's ping time into a pong so it can be matched
+// to the request it answers.
+func stampPingTime(pong, ping []byte) []byte {
+	if len(pong) >= 9 && len(ping) >= 9 {
+		copy(pong[1:9], ping[1:9])
+	}
+	return pong
 }
 
 func (proxy *ProxyServer) markServerOffline() {
@@ -604,14 +720,39 @@ func (proxy *ProxyServer) isServerOffline() bool {
 	return proxy.serverOffline
 }
 
-// buildOfflinePong returns the canned offline advertisement, echoing the
-// client's ping time so consoles can match the response to their request.
+// buildOfflinePong returns the offline advertisement, echoing the client's ping
+// time so consoles can match the response to their request.
 func (proxy *ProxyServer) buildOfflinePong(ping []byte) []byte {
-	reply := append([]byte(nil), proto.OfflinePong.Bytes()...)
-	if len(ping) >= 9 && len(reply) >= 9 {
-		copy(reply[1:9], ping[1:9])
+	return proxy.rewriteUnconnectedPong(stampPingTime(proxy.offlinePongTemplate(), ping))
+}
+
+// offlinePongTemplate is the pong body used while the remote is unreachable.
+//
+// It is derived from the last pong the remote actually sent, so the LAN entry
+// keeps that server's real edition, protocol number and version name and only
+// the MOTD changes. Advertising a fixed protocol instead would make the offline
+// entry claim a version unrelated to the server behind it, and one that ages
+// out of every client's compatible range as Mojang ships new releases.
+func (proxy *ProxyServer) offlinePongTemplate() []byte {
+	last := proxy.lastKnownPong()
+	if last == nil {
+		return append([]byte(nil), proto.OfflinePong.Bytes()...)
 	}
-	return proxy.rewriteUnconnectedPong(reply)
+
+	packet, err := proto.ReadUnconnectedPing(last)
+	if err != nil {
+		return append([]byte(nil), proto.OfflinePong.Bytes()...)
+	}
+
+	packet.Pong.MOTD = proto.OfflineMOTD
+	packet.Pong.Players = "0"
+	// Non-zero capacity: some consoles omit full/zero-slot entries from Friends.
+	if packet.Pong.MaxPlayers == "" || packet.Pong.MaxPlayers == "0" {
+		packet.Pong.MaxPlayers = "1"
+	}
+
+	buf := packet.Build()
+	return buf.Bytes()
 }
 
 // Proxies packets sent by the server to us for a specific Minecraft client back to
@@ -633,8 +774,8 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 				break
 			}
 
-			// Game-session read errors (including the 5s deadline after a
-			// console disconnect) are not a reliable "server offline" signal.
+			// Game-session read errors (including the deadline that fires after
+			// a console disconnect) are not a reliable "server offline" signal.
 			// LAN discovery uses a dedicated probe (#117). Connection refused
 			// on an active session still marks offline (#79/#104).
 			if isConnRefusedError(err) {

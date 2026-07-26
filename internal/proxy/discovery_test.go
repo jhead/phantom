@@ -37,7 +37,7 @@ func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
 	}
 	defer p.Close()
 
-	ping := []byte{proto.UnconnectedPingID, 1, 2, 3, 4, 5, 6, 7, 8}
+	ping := proto.BuildUnconnectedPing([]byte{1, 2, 3, 4, 5, 6, 7, 8}, nil)
 	if err := p.HandleUnconnectedPing(ping, client.LocalAddr()); err != nil {
 		t.Fatalf("HandleUnconnectedPing: %v", err)
 	}
@@ -89,7 +89,8 @@ func TestHandleUnconnectedPingOpenConnections(t *testing.T) {
 	}
 	defer p.Close()
 
-	ping := []byte{proto.UnconnectedPingOpenID, 1, 2, 3, 4, 5, 6, 7, 8}
+	ping := proto.BuildUnconnectedPing([]byte{1, 2, 3, 4, 5, 6, 7, 8}, nil)
+	ping[0] = proto.UnconnectedPingOpenID
 	if err := p.HandleUnconnectedPing(ping, client.LocalAddr()); err != nil {
 		t.Fatalf("HandleUnconnectedPing 0x02: %v", err)
 	}
@@ -119,7 +120,9 @@ func TestHandleUnconnectedPingRejectsBadInput(t *testing.T) {
 	defer p.Close()
 
 	client := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}
-	if err := p.HandleUnconnectedPing([]byte{proto.UnconnectedPingID}, client); err == nil {
+	ping := proto.BuildUnconnectedPing([]byte{1, 2, 3, 4, 5, 6, 7, 8}, nil)
+
+	if err := p.HandleUnconnectedPing(ping, client); err == nil {
 		t.Fatal("expected error when proxy not started")
 	}
 
@@ -130,8 +133,19 @@ func TestHandleUnconnectedPingRejectsBadInput(t *testing.T) {
 	if err := p.HandleUnconnectedPing([]byte{proto.UnconnectedPongID}, client); err == nil {
 		t.Fatal("expected error for non-ping packet")
 	}
-	if err := p.HandleUnconnectedPing([]byte{proto.UnconnectedPingID}, nil); err == nil {
+	if err := p.HandleUnconnectedPing(ping, nil); err == nil {
 		t.Fatal("expected error for nil from")
+	}
+	if err := p.HandleUnconnectedPing(ping[:len(ping)-12], client); err == nil {
+		t.Fatal("expected error for ping truncated inside the magic")
+	}
+
+	// Right packet ID, wrong magic: not a discovery ping, and must not be
+	// treated as one just because the first byte matches.
+	badMagic := append([]byte(nil), ping...)
+	badMagic[10] ^= 0xFF
+	if err := p.HandleUnconnectedPing(badMagic, client); err == nil {
+		t.Fatal("expected error for ping with invalid magic")
 	}
 }
 

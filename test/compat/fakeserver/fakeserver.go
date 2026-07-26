@@ -9,6 +9,7 @@
 package fakeserver
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"sync"
@@ -112,8 +113,7 @@ func (s *Server) serve() {
 			continue
 		}
 
-		switch data[0] {
-		case corpus.PingID, corpus.PingOpenID:
+		if isOfflinePing(data) {
 			s.mu.Lock()
 			s.pings++
 			s.mu.Unlock()
@@ -122,13 +122,34 @@ func (s *Server) serve() {
 				continue
 			}
 			_, _ = s.conn.WriteToUDP(s.pongFor(data), from)
+			continue
+		}
 
-		default:
-			if s.opts.EchoPayloads {
-				_, _ = s.conn.WriteToUDP(data, from)
-			}
+		if s.opts.EchoPayloads {
+			_, _ = s.conn.WriteToUDP(data, from)
 		}
 	}
+}
+
+// pingMagicOffset is where the offline magic sits in an Unconnected Ping:
+// after the packet ID (1) and the ping time (8). Note this is NOT where a pong
+// puts it - a pong carries the server GUID first.
+const pingMagicOffset = 9
+
+// isOfflinePing reports whether data is a ping a real server would answer.
+//
+// The magic is checked, not just the packet ID, because that is what RakLib
+// (PocketMine) and Nukkit do: they compare the magic and silently drop anything
+// that fails. Being permissive here would let phantom send a malformed probe
+// and still look healthy in every test.
+func isOfflinePing(data []byte) bool {
+	if len(data) < pingMagicOffset+len(corpus.Magic) {
+		return false
+	}
+	if data[0] != corpus.PingID && data[0] != corpus.PingOpenID {
+		return false
+	}
+	return bytes.Equal(data[pingMagicOffset:pingMagicOffset+len(corpus.Magic)], corpus.Magic)
 }
 
 // pongFor returns the configured pong with the caller's ping time stamped into
@@ -177,8 +198,7 @@ func (s *Server) LastPayload() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := len(s.received) - 1; i >= 0; i-- {
-		d := s.received[i]
-		if len(d) > 0 && d[0] != corpus.PingID && d[0] != corpus.PingOpenID {
+		if d := s.received[i]; len(d) > 0 && !isOfflinePing(d) {
 			return d
 		}
 	}

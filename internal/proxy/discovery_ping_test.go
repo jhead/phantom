@@ -12,15 +12,12 @@ import (
 
 // bareUnconnectedPing builds a minimal RakNet Unconnected Ping (0x01).
 func bareUnconnectedPing(pingTime [8]byte) []byte {
-	magic := []byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78}
-	out := make([]byte, 0, 1+8+8+16)
-	out = append(out, proto.UnconnectedPingID)
-	out = append(out, pingTime[:]...)
-	out = append(out, 0, 0, 0, 0, 0, 0, 0, 0) // client GUID
-	out = append(out, magic...)
-	return out
+	return proto.BuildUnconnectedPing(pingTime[:], nil)
 }
 
+// startFakeBedrockPongServer stands in for a strict RakNet server: like
+// RakLib/PocketMine it validates the offline magic and ignores anything that
+// fails, which is what makes a wrongly-ordered ping observable in tests.
 func startFakeBedrockPongServer(t *testing.T) *net.UDPAddr {
 	t.Helper()
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -34,7 +31,7 @@ func startFakeBedrockPongServer(t *testing.T) *net.UDPAddr {
 			if err != nil {
 				return
 			}
-			if n < 9 || buf[0] != proto.UnconnectedPingID {
+			if !proto.IsUnconnectedPing(buf[:n]) {
 				continue
 			}
 			pong := proto.UnconnectedPing{
