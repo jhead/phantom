@@ -195,6 +195,14 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	data := packetBuffer[:read]
 	log.Trace().Msgf("client recv: %v", data)
 
+	// Drop echoes of our own DialUDP traffic. When -server points at this same
+	// host's :19132 (typical LAN setup), SO_REUSEADDR can deliver our outbound
+	// packets back to the ping listener. Proxying those again would open a new
+	// UDP socket per echo until dial fails with "too many open files".
+	if proxy.clientMap.IsOwnAddress(client) {
+		return nil
+	}
+
 	// Handler triggered when a new client connects and we create a new connetion to the remote server
 	onNewConnection := func(newServerConn *net.UDPConn) {
 		log.Info().Msgf("New connection from client %s -> %s", client.String(), listener.LocalAddr())
