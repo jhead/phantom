@@ -339,12 +339,11 @@ func TestPayloadIntegrity(t *testing.T) {
 	}
 }
 
-// TestOversizedDatagramTruncates documents, rather than condemns, what happens
-// past phantom's 1472-byte read buffer. RakNet cannot produce a datagram this
-// large (its own ceiling is 1464), so this is unreachable in practice - but
-// pinning the behaviour means a future buffer change is a deliberate decision
-// rather than an accident.
-func TestOversizedDatagramTruncates(t *testing.T) {
+// TestOversizedDatagramPassThrough documents that phantom's 65535-byte UDP read
+// buffer forwards datagrams larger than the old 1472-byte limit. RakNet's own
+// ceiling is 1464 bytes of payload, so 1500 is still synthetic - but it pins the
+// deliberate buffer enlargement (#128) rather than leaving it accidental.
+func TestOversizedDatagramPassThrough(t *testing.T) {
 	srv, p := startPair(t, fakeserver.Opts{EchoPayloads: true}, Opts{})
 
 	c, err := NewClient(p.Addr)
@@ -355,17 +354,25 @@ func TestOversizedDatagramTruncates(t *testing.T) {
 
 	payload := make([]byte, 1500)
 	payload[0] = 0x84
+	for i := 1; i < len(payload); i++ {
+		payload[i] = byte(i % 251)
+	}
 	if err := c.Send(payload); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 
-	if _, err := c.Recv(PingTimeout); err != nil {
-		t.Logf("no echo returned for an oversized datagram: %v", err)
+	got, err := c.Recv(PingTimeout)
+	if err != nil {
+		t.Fatalf("no echo returned for 1500-byte datagram: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("1500-byte payload corrupted in transit: sent %d bytes, got %d back",
+			len(payload), len(got))
 	}
 
-	if got := srv.LastPayload(); got != nil && len(got) == len(payload) {
-		t.Errorf("upstream received all %d bytes; phantom's 1472-byte buffer "+
-			"was expected to truncate. Buffer size may have changed.", len(got))
+	if upstream := srv.LastPayload(); upstream == nil || len(upstream) != len(payload) {
+		t.Errorf("upstream saw %v bytes, want all %d forwarded without truncation",
+			len(upstream), len(payload))
 	}
 }
 
