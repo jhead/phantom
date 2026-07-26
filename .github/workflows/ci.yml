@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Pins the toolchain to go.mod's declared minimum, so accidental use of a
+  # newer language feature is caught. Linux only, see the note on the unit job.
+  vet:
+    name: vet + race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal ./test)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+  # Unit tests over the cross-version corpus. Pure Go, no network, no Node, ~1s.
+  # The OS matrix is nearly free here and catches path, endianness and
+  # line-ending surprises that only ever show up off Linux.
+  unit:
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # A current toolchain, NOT go.mod's minimum, because macos-latest is
+          # now macos-26 and its dyld refuses binaries without an LC_UUID load
+          # command. Go's internal linker only started emitting one in 1.26
+          # (golang/go#69987, golang/go#78012), so building this repo with Go
+          # 1.21 on macOS 26 fails before any phantom code runs - including on
+          # pre-existing tests like internal/util.
+          #
+          # go.mod's directive stays at the true LANGUAGE minimum and is still
+          # exercised by the `vet` job on Linux, where LC_UUID is irrelevant.
+          go-version: 'stable'
+          cache: true
+
+      - name: Corpus + rewrite tests
+        run: go test ./internal/...
+
+      - name: Fuzz the pong parser (short)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test ./internal/proto/ -run=Fuzz -fuzz=FuzzReadUnconnectedPing -fuzztime=30s
+
+  # End-to-end tests against a real phantom subprocess.
+  #
+  # Sharded for ISOLATION as much as for speed: phantom binds UDP :19132
+  # unconditionally with SO_REUSEPORT, so two concurrent instances on one host
+  # silently load-balance each other's datagrams. One shard per runner gives
+  # each its own network stack; cases run serially within a shard.
+  e2e:
+    name: e2e (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      PHANTOM_SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: test/compat/node/package-lock.json
+
+      - name: Install bedrock-protocol
+        working-directory: test/compat/node
+        run: npm ci
+
+      - name: End-to-end
+        run: go test -tags='e2e slow node' ./test/compat/... -timeout=20m -v
+
+  cross-compile:
+    name: cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build every release target
+        run: make build

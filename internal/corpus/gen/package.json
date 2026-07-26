@@ -1,0 +1,12 @@
+{
+  "name": "phantom-corpus-gen",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Captures real RakNet Unconnected Pong bytes per Minecraft protocol version",
+  "scripts": {
+    "capture": "node capture.js"
+  },
+  "dependencies": {
+    "bedrock-protocol": "3.57.0"
+  }
+}
