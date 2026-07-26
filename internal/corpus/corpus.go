@@ -1,8 +1,8 @@
 // Package corpus loads the cross-version compatibility test fixtures.
 //
-// It contains NO phantom protocol logic - only fixture data and the XFAIL
-// registry - which is why both test suites may import it without the black-box
-// tier learning anything about phantom's implementation. See test/compat/DESIGN.md.
+// It contains no phantom protocol logic, only fixture data, which is why the
+// end-to-end tests may import it without learning anything about phantom's
+// implementation. See test/compat/DESIGN.md.
 package corpus
 
 import (
@@ -20,9 +20,6 @@ var capturedJSON []byte
 
 //go:embed data/synthetic.json
 var syntheticJSON []byte
-
-//go:embed data/known_failures.json
-var knownFailuresJSON []byte
 
 // Magic is the 16-byte RakNet offline-message magic constant.
 var Magic = []byte{
@@ -130,27 +127,14 @@ type syntheticDoc struct {
 	Entries    []SyntheticEntry `json:"entries"`
 }
 
-// KnownFailure is one registered XFAIL.
-type KnownFailure struct {
-	ID     string `json:"id"`
-	Reason string `json:"reason"`
-	TODO   string `json:"todo"`
-}
-
-type knownFailuresDoc struct {
-	Failures []KnownFailure `json:"failures"`
-}
-
 var (
 	captured  capturedDoc
 	synthetic syntheticDoc
-	known     knownFailuresDoc
 )
 
 func init() {
 	mustUnmarshal(capturedJSON, &captured, "captured.json")
 	mustUnmarshal(syntheticJSON, &synthetic, "synthetic.json")
-	mustUnmarshal(knownFailuresJSON, &known, "known_failures.json")
 
 	pingTime := mustHex(synthetic.PingTime, "synthetic pingTime")
 	guid := mustHex(synthetic.ServerGUID, "synthetic serverGUID")
@@ -262,16 +246,3 @@ func Synthetic() []SyntheticEntry { return synthetic.Entries }
 // SyntheticPingTime and SyntheticGUID are the values baked into generated frames.
 func SyntheticPingTime() []byte { return mustHex(synthetic.PingTime, "synthetic pingTime") }
 func SyntheticGUID() []byte     { return mustHex(synthetic.ServerGUID, "synthetic serverGUID") }
-
-// KnownFailures returns the whole XFAIL registry.
-func KnownFailures() []KnownFailure { return known.Failures }
-
-// LookupKnownFailure returns the registered failure for an id, if any.
-func LookupKnownFailure(id string) (KnownFailure, bool) {
-	for _, f := range known.Failures {
-		if f.ID == id {
-			return f, true
-		}
-	}
-	return KnownFailure{}, false
-}

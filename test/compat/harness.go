@@ -3,9 +3,9 @@
 // BLACK-BOX RULE: this package must not import phantom's implementation
 // packages (internal/proto, internal/proxy, internal/clientmap). It knows only
 // the built binary, its command-line flags, and UDP. Importing internal/corpus
-// is permitted - that package is fixture data and the XFAIL registry, with no
-// phantom protocol logic in it. TestBlackBoxRuleHolds in e2e_test.go enforces
-// this mechanically rather than trusting anyone to remember.
+// is permitted: that package is fixture data, with no phantom protocol logic in
+// it. TestBlackBoxRuleHolds in e2e_test.go enforces this mechanically rather
+// than trusting anyone to remember.
 //
 // See DESIGN.md.
 package compat

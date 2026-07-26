@@ -10,6 +10,7 @@ package proto_test
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -47,18 +48,18 @@ func assertFieldsPreserved(in, out string) error {
 
 	if len(want) != len(got) {
 		if len(got) < len(want) {
-			return corpus.Errorf(
+			return fmt.Errorf(
 				"field count dropped from %d to %d; lost trailing fields %q\n  in:  %q\n  out: %q",
 				len(want), len(got), want[len(got):], in, out)
 		}
-		return corpus.Errorf(
+		return fmt.Errorf(
 			"field count grew from %d to %d\n  in:  %q\n  out: %q",
 			len(want), len(got), in, out)
 	}
 
 	for i := range want {
 		if want[i] != got[i] {
-			return corpus.Errorf("field %d changed: %q -> %q\n  in:  %q\n  out: %q",
+			return fmt.Errorf("field %d changed: %q -> %q\n  in:  %q\n  out: %q",
 				i, want[i], got[i], in, out)
 		}
 	}
@@ -100,8 +101,7 @@ func TestCapturedCorpusParses(t *testing.T) {
 }
 
 // TestCapturedCorpusRoundTrip asserts field preservation across every captured
-// version. Every real server sends 13 fields, so this currently XFAILs for all
-// of them - that is the headline compatibility bug, measured against real bytes.
+// version, measured against real captured bytes.
 func TestCapturedCorpusRoundTrip(t *testing.T) {
 	for _, e := range corpus.Captured() {
 		t.Run(e.MC, func(t *testing.T) {
@@ -109,9 +109,9 @@ func TestCapturedCorpusRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("round-trip failed: %v", err)
 			}
-			corpus.Check(t, "unit/trailing-fields-preserved", func() error {
-				return assertFieldsPreserved(e.MOTD, out)
-			})
+			if err := assertFieldsPreserved(e.MOTD, out); err != nil {
+				t.Error(err)
+			}
 		})
 	}
 }
@@ -155,32 +155,16 @@ func TestSyntheticShapes(t *testing.T) {
 				return
 			}
 
-			// Only fixtures carrying more fields than phantom's 12-field struct
-			// are expected to lose data today.
-			id := "unit/no-such-failure"
-			if corpus.RealFieldCount(e.MOTDString()) > 12 {
-				id = "unit/trailing-fields-preserved"
+			if err := assertFieldsPreserved(e.MOTDString(), out); err != nil {
+				t.Error(err)
 			}
-			corpus.Check(t, id, func() error {
-				return assertFieldsPreserved(e.MOTDString(), out)
-			})
 		})
 	}
 }
 
 // TestMalformedFrames asserts the parser rejects input it cannot trust.
-// Several of these currently parse into zero-padded garbage instead of
-// erroring; each is registered against its TODO.md entry.
+// Some currently parse into zero-padded garbage instead of erroring.
 func TestMalformedFrames(t *testing.T) {
-	// Which registered bug each malformed fixture demonstrates. Fixtures absent
-	// from this map are expected to be rejected correctly today - phantom does
-	// catch outright truncation, just not semantic defects like a bad magic.
-	xfailByID := map[string]string{
-		"malformed/length-exceeds-body": "unit/short-read-rejected",
-		"malformed/bad-magic":           "unit/magic-validated",
-		"malformed/wrong-packet-id":     "unit/packet-id-validated",
-	}
-
 	for _, e := range corpus.Synthetic() {
 		if !e.IsRaw() && !e.WantParseError {
 			continue
@@ -207,37 +191,9 @@ func TestMalformedFrames(t *testing.T) {
 				return
 			}
 
-			id, ok := xfailByID[e.ID]
-			if !ok {
-				id = "unit/no-such-failure"
+			if err == nil {
+				t.Error("parser accepted malformed input that it should reject")
 			}
-			corpus.Check(t, id, func() error {
-				if err == nil {
-					return corpus.Errorf("parser accepted malformed input that it should reject")
-				}
-				return nil
-			})
 		})
-	}
-}
-
-// TestKnownFailureRegistryIsWellFormed guards the guard: a typo in an id would
-// silently turn an XFAIL into an unreported pass.
-func TestKnownFailureRegistryIsWellFormed(t *testing.T) {
-	seen := map[string]bool{}
-	for _, f := range corpus.KnownFailures() {
-		if f.ID == "" {
-			t.Error("known failure with empty id")
-		}
-		if f.Reason == "" {
-			t.Errorf("known failure %q has no reason", f.ID)
-		}
-		if f.TODO == "" {
-			t.Errorf("known failure %q has no TODO.md reference", f.ID)
-		}
-		if seen[f.ID] {
-			t.Errorf("duplicate known failure id %q", f.ID)
-		}
-		seen[f.ID] = true
 	}
 }

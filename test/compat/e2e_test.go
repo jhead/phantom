@@ -98,13 +98,10 @@ func TestTrailingFieldsReachClient(t *testing.T) {
 
 	in, out := fieldsOf(motd), fieldsOf(motdOf(t, pong))
 
-	corpus.Check(t, "unit/trailing-fields-preserved", func() error {
-		if len(out) < len(in) {
-			return corpus.Errorf("client received %d fields, upstream sent %d; lost %q",
-				len(out), len(in), in[len(out):])
-		}
-		return nil
-	})
+	if len(out) < len(in) {
+		t.Errorf("client received %d fields, upstream sent %d; lost %q",
+			len(out), len(in), in[len(out):])
+	}
 }
 
 // TestServerIDIsStableAndPerInstance is invariant 4b, and the reason phantom is
@@ -267,15 +264,12 @@ func TestOfflinePong(t *testing.T) {
 			t.Fatalf("phantom never sent an offline pong\n--- output ---\n%s", p.Output())
 		}
 
-		corpus.Check(t, "e2e/offline-pong-echoes-ping-time", func() error {
-			if !bytes.Equal(pong[1:9], want) {
-				return corpus.Errorf(
-					"offline pong carries ping time %x, want the client's %x; "+
-						"the client uses this to compute displayed latency",
-					pong[1:9], want)
-			}
-			return nil
-		})
+		if !bytes.Equal(pong[1:9], want) {
+			t.Errorf(
+				"offline pong carries ping time %x, want the client's %x; "+
+					"the client uses this to compute displayed latency",
+				pong[1:9], want)
+		}
 	})
 
 	t.Run("carries-nonzero-guid", func(t *testing.T) {
@@ -286,14 +280,11 @@ func TestOfflinePong(t *testing.T) {
 			t.Fatalf("phantom never sent an offline pong\n--- output ---\n%s", p.Output())
 		}
 
-		corpus.Check(t, "e2e/offline-pong-nonzero-guid", func() error {
-			if bytes.Equal(pong[9:17], make([]byte, 8)) {
-				return corpus.Errorf(
-					"offline pong advertises binary ServerGUID 0; every phantom whose " +
-						"upstream is down would claim the same RakNet identity")
-			}
-			return nil
-		})
+		if bytes.Equal(pong[9:17], make([]byte, 8)) {
+			t.Errorf(
+				"offline pong advertises binary ServerGUID 0; every phantom whose " +
+					"upstream is down would claim the same RakNet identity")
+		}
 	})
 
 	t.Run("answers-0x02-ping", func(t *testing.T) {
@@ -305,14 +296,11 @@ func TestOfflinePong(t *testing.T) {
 			t.Fatalf("phantom never sent an offline pong for 0x01\n--- output ---\n%s", p.Output())
 		}
 
-		corpus.Check(t, "e2e/offline-pong-answers-0x02", func() error {
-			if waitForOfflinePongWithin(t, p, corpus.PingOpenID, DefaultPingTime(), negativeWait) == nil {
-				return corpus.Errorf(
-					"a client pinging with 0x02 (Unconnected Ping Open Connections) " +
-						"got no offline pong; the offline path matches only 0x01")
-			}
-			return nil
-		})
+		if waitForOfflinePongWithin(t, p, corpus.PingOpenID, DefaultPingTime(), negativeWait) == nil {
+			t.Errorf(
+				"a client pinging with 0x02 (Unconnected Ping Open Connections) " +
+					"got no offline pong; the offline path matches only 0x01")
+		}
 	})
 }
 

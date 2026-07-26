@@ -67,9 +67,8 @@ need to edit JavaScript.
 
 End to end tests must not import `internal/proto`, `internal/proxy` or
 `internal/clientmap`. They may import `internal/corpus`, which holds fixture data and
-the known-failure registry and contains no phantom protocol logic.
-`TestBlackBoxRuleHolds` enforces this with `go list -deps` rather than relying on
-convention.
+contains no phantom protocol logic. `TestBlackBoxRuleHolds` enforces this with
+`go list -deps` rather than relying on convention.
 
 Unit invariants are about bytes and pure functions. End to end invariants are about
 process identity, sockets and time. An assertion that needs phantom's internals
@@ -170,24 +169,6 @@ network stack. Cases run serially within a shard.
 Locally the suite runs serially and checks port 19132 first, skipping with an
 explanatory message if it is busy, so a developer running Minecraft or phantom does
 not see confusing failures.
-
-## Known failure registry
-
-`internal/corpus/data/known_failures.json` records invariants phantom does not
-satisfy, each with a reason and a reference to the tracking entry in TODO.md. Four
-outcomes:
-
-- Unregistered and passing: silent success.
-- Unregistered and failing: an ordinary test failure.
-- Registered and failing: reported as XFAIL, and the build stays green.
-- Registered and passing: reported as XPASS, and the build fails.
-
-The last case is the point of the mechanism. Fixing a protocol bug breaks the build
-until its entry is deleted, so the registry cannot decay into a list of things that
-were fixed long ago. It doubles as an accurate inventory of open protocol bugs.
-
-Assertions return an error rather than calling `t.Errorf` directly, so a failure can
-be captured and reinterpreted instead of being recorded immediately.
 
 ## Harness mechanics
 

@@ -82,6 +82,13 @@ func (cm *ClientMap) idleCleanupLoop() {
 	}
 }
 
+// Len returns the number of active client connections.
+func (cm *ClientMap) Len() int {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return len(cm.clients)
+}
+
 func (cm *ClientMap) Delete(clientAddr net.Addr) {
 	key := clientAddr.String()
 
@@ -94,6 +101,34 @@ func (cm *ClientMap) Delete(clientAddr net.Addr) {
 
 	cm.mutex.Unlock()
 }
+
+// IsOwnAddress reports whether addr is the local address of an outbound
+// server connection tracked by this map.
+//
+// This matters when the remote server shares a host/port with phantom's own
+// UDP listeners (commonly :19132 with SO_REUSEADDR): outbound datagrams can
+// be delivered back to our ping listener. If those echoes are treated as new
+// clients, each one DialUDP()s again and the process can hit EMFILE
+// ("too many open files").
+func (cm *ClientMap) IsOwnAddress(addr net.Addr) bool {
+	if addr == nil {
+		return false
+	}
+
+	key := addr.String()
+
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	for _, client := range cm.clients {
+		if client.conn.LocalAddr().String() == key {
+			return true
+		}
+	}
+
+	return false
+}
+
 
 // Get gets or creates a new UDP connection to the remote server and stores it
 // in a map, matching clients to remote server connections. This way, we keep one

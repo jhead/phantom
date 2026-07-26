@@ -38,11 +38,16 @@ const (
 	idxPort6
 )
 
+// testServerID is the per-instance identity the rewrite should stamp into both
+// the ServerID string field and the binary GUID.
+const testServerID int64 = 0x0123456789ABCDEF
+
 // newTestProxy builds the minimal ProxyServer the rewrite path actually touches.
 // No sockets are opened - this is a pure-function test of packet surgery.
 func newTestProxy(removePorts bool) *ProxyServer {
 	return &ProxyServer{
 		boundPort: testBoundPort,
+		serverID:  testServerID,
 		prefs:     ProxyPrefs{RemovePorts: removePorts},
 	}
 }
@@ -97,7 +102,7 @@ func TestRewritePreservesUpstreamFields(t *testing.T) {
 
 // TestRewriteReplacesServerID is invariant 4a.
 func TestRewriteReplacesServerID(t *testing.T) {
-	want := fmt.Sprintf("%d", serverID)
+	want := fmt.Sprintf("%d", testServerID)
 
 	for _, e := range corpus.Captured() {
 		t.Run(e.MC, func(t *testing.T) {
@@ -114,9 +119,10 @@ func TestRewriteReplacesServerID(t *testing.T) {
 	}
 }
 
-// TestRewriteRewritesPorts is invariant 5. Note the asymmetry: a server that
-// advertises no ports keeps advertising none - phantom only rewrites ports that
-// were already present.
+// TestRewriteRewritesPorts is invariant 5. phantom always advertises its own
+// bind port, including when the upstream omitted Port4 and Port6 entirely.
+// Geyser commonly omits them, and an empty port field makes consoles fall back
+// to 19132 or skip the entry, so injecting them is deliberate.
 func TestRewriteRewritesPorts(t *testing.T) {
 	wantPort := fmt.Sprintf("%d", testBoundPort)
 
@@ -148,34 +154,36 @@ func TestRewriteRewritesPorts(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy-pong-without-ports", func(t *testing.T) {
+	t.Run("ports-injected-when-upstream-omits-them", func(t *testing.T) {
 		frame := corpus.BuildPong(corpus.SyntheticPingTime(), corpus.SyntheticGUID(),
 			"MCPE;Legacy;390;1.14.60;0;10;12345678;Sub;Survival;1;")
 
 		_, out, _ := rewriteFields(t, newTestProxy(false), frame)
 
-		if len(out) > idxPort4 && out[idxPort4] != "" {
-			t.Errorf("Port4 = %q; a server advertising no ports must keep advertising none",
-				out[idxPort4])
+		if len(out) <= idxPort6 {
+			t.Fatalf("rewrite emitted only %d fields, want the port fields appended", len(out))
+		}
+		if out[idxPort4] != wantPort {
+			t.Errorf("Port4 = %q, want %q injected", out[idxPort4], wantPort)
+		}
+		if out[idxPort6] != wantPort {
+			t.Errorf("Port6 = %q, want %q injected", out[idxPort6], wantPort)
 		}
 	})
 }
 
-// TestRewritePreservesTrailingFields is invariant 2 - the headline
-// forwards-compatibility bug, exercised against real captured bytes.
+// TestRewritePreservesTrailingFields is invariant 2, exercised against real
+// captured bytes.
 func TestRewritePreservesTrailingFields(t *testing.T) {
 	for _, e := range corpus.Captured() {
 		t.Run(e.MC, func(t *testing.T) {
 			in, out, _ := rewriteFields(t, newTestProxy(false), e.Frame())
 
-			corpus.Check(t, "unit/trailing-fields-preserved", func() error {
-				if len(out) < len(in) {
-					return corpus.Errorf(
-						"rewrite dropped %d trailing field(s) %q (upstream sent %d, phantom emitted %d)",
-						len(in)-len(out), in[len(out):], len(in), len(out))
-				}
-				return nil
-			})
+			if len(out) < len(in) {
+				t.Errorf(
+					"rewrite dropped %d trailing field(s) %q (upstream sent %d, phantom emitted %d)",
+					len(in)-len(out), in[len(out):], len(in), len(out))
+			}
 		})
 	}
 }
@@ -202,24 +210,20 @@ func TestRewritePreservesHeader(t *testing.T) {
 }
 
 // TestRewriteRewritesBinaryGUID is invariant 7. RakNet identifies a server by
-// the 8-byte GUID at bytes 9-16, not by the MOTD string field. phantom rewrites
-// only the string, so two instances proxying one upstream broadcast identical
-// binary GUIDs.
+// the 8-byte GUID at bytes 9-16, not by the MOTD string field, so rewriting only
+// the string would make two instances proxying one upstream look identical.
 func TestRewriteRewritesBinaryGUID(t *testing.T) {
 	for _, e := range corpus.Captured() {
 		t.Run(e.MC, func(t *testing.T) {
 			frame := e.Frame()
 			out := newTestProxy(false).rewriteUnconnectedPong(frame)
 
-			corpus.Check(t, "unit/binary-guid-rewritten", func() error {
-				if bytes.Equal(out[9:17], frame[9:17]) {
-					return corpus.Errorf(
-						"binary ServerGUID passed through unchanged (%x); "+
-							"it must carry phantom's per-instance id, like the string ServerID does",
-						out[9:17])
-				}
-				return nil
-			})
+			if bytes.Equal(out[9:17], frame[9:17]) {
+				t.Errorf(
+					"binary ServerGUID passed through unchanged (%x); "+
+						"it must carry phantom's per-instance id, like the string ServerID does",
+					out[9:17])
+			}
 		})
 	}
 }

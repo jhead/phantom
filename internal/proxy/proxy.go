@@ -1,10 +1,14 @@
 package proxy
 
 import (
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"regexp"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jhead/phantom/internal/clientmap"
@@ -15,9 +19,23 @@ import (
 	reuse "github.com/libp2p/go-reuseport"
 )
 
-const maxMTU = 1472
+// udpRecvBufferSize is the per-read buffer for proxied UDP datagrams.
+//
+// RakNet advertises MTU up to 1492 including IP(20)+UDP(8) headers, so a
+// well-formed max UDP payload is 1464. Some Bedrock stacks still emit slightly
+// larger datagrams (observed ≥1474), and a too-small ReadFrom buffer silently
+// truncates on several platforms — including macOS, where the error is nil.
+// Resource-pack transfer is mostly full-MTU traffic, so truncation surfaces as
+// clients stuck on "Loading resources...". Use the full UDP datagram limit.
+const udpRecvBufferSize = 65535
+
+// offlineTimeoutThreshold is how many consecutive upstream read timeouts are
+// required before advertising OfflinePong on LAN discovery. A single flaky
+// timeout must not flip the whole proxy "offline" (#104).
+const offlineTimeoutThreshold = 3
 
 var idleCheckInterval = 5 * time.Second
+var discoveryPingTimeout = 5 * time.Second
 
 type ProxyServer struct {
 	bindAddress         *net.UDPAddr
@@ -30,6 +48,8 @@ type ProxyServer struct {
 	prefs               ProxyPrefs
 	dead                *abool.AtomicBool
 	serverOffline       bool
+	offlineTimeouts     int
+	serverID            int64
 }
 
 type ProxyPrefs struct {
@@ -39,12 +59,32 @@ type ProxyPrefs struct {
 	IdleTimeout  time.Duration
 	EnableIPv6   bool
 	RemovePorts  bool
-	NumWorkers   uint
+	NumWorkers               uint
+	// DisableDiscoveryListener skips binding :19132/:19133. Used when a
+	// DiscoveryHub owns discovery and fans pings into HandleUnconnectedPing.
+	DisableDiscoveryListener bool
 }
 
 var randSource = rand.NewSource(time.Now().UnixNano())
-var serverID = randSource.Int63()
 var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
+
+// isOfflineError reports whether err indicates the remote Bedrock server is
+// unreachable. Connected UDP sockets surface ICMP port-unreachable as
+// ECONNREFUSED on a later Read/Write — normal UDP behavior, not a proxy bug.
+func isOfflineError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	// Fallback for platforms / wrappers that only expose the message text.
+	return offlineErrorRegex.MatchString(err.Error())
+}
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	bindPort := prefs.BindPort
@@ -78,53 +118,15 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		prefs,
 		abool.New(),
 		false,
+		0,
+		randSource.Int63(),
 	}, nil
 }
 
 func (proxy *ProxyServer) Start() error {
-	// Bind to 19132 on all addresses to receive broadcasted pings
-	// Sets SO_REUSEADDR et al to support multiple instances of phantom
-	log.Info().Msgf("Binding ping server to port 19132")
-	if pingServer, err := reuse.ListenPacket("udp4", ":19132"); err == nil {
-		proxy.pingServer = pingServer
-
-		// Start proxying ping packets from the broadcast listener
-		go proxy.readLoop(proxy.pingServer)
-	} else {
-		// Bind failed
+	if err := proxy.listen(); err != nil {
 		return err
 	}
-
-	// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
-	if proxy.prefs.EnableIPv6 {
-		log.Info().Msgf("Binding IPv6 ping server to port 19133")
-		if pingServerV6, err := reuse.ListenPacket("udp6", ":19133"); err == nil {
-			proxy.pingServerV6 = pingServerV6
-
-			// Start proxying ping packets from the broadcast listener
-			go proxy.readLoop(proxy.pingServerV6)
-		} else {
-			// IPv6 Bind failed
-			log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
-		}
-	}
-
-	network := "udp4"
-	if proxy.prefs.EnableIPv6 {
-		network = "udp"
-	}
-
-	// Bind to specified UDP addr and port to receive data from Minecraft clients
-	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
-	if server, err := reuse.ListenPacket(network, proxy.bindAddress.String()); err == nil {
-		// a safe cast, I promise
-		proxy.server = server.(*net.UDPConn)
-	} else {
-		return err
-	}
-
-	log.Info().Msgf("Proxy server listening!")
-	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
 
 	// Start processing everything else using the proxy listener
 	proxy.startWorkers(proxy.server)
@@ -132,22 +134,131 @@ func (proxy *ProxyServer) Start() error {
 	return nil
 }
 
+// StartAsync is like Start but runs all workers in goroutines and returns once
+// listening. Used when one process hosts multiple proxies behind a DiscoveryHub.
+func (proxy *ProxyServer) StartAsync() error {
+	if err := proxy.listen(); err != nil {
+		return err
+	}
+
+	log.Info().Msgf("Starting %d workers", proxy.prefs.NumWorkers)
+	for i := uint(0); i < proxy.prefs.NumWorkers; i++ {
+		go proxy.readLoop(proxy.server)
+	}
+	return nil
+}
+
+func (proxy *ProxyServer) listen() error {
+	if !proxy.prefs.DisableDiscoveryListener {
+		// Exclusive bind: SO_REUSEPORT/ADDR cannot correctly share discovery
+		// across processes (see DiscoveryHub / #175).
+		log.Info().Msgf("Binding ping server to port 19132")
+		pingServer, err := net.ListenPacket("udp4", ":19132")
+		if err != nil {
+			return fmt.Errorf("bind :19132: %w (only one phantom can own LAN discovery; pass multiple -server flags to one process instead of running multiple instances)", err)
+		}
+		proxy.pingServer = pingServer
+		go proxy.readLoop(proxy.pingServer)
+
+		// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
+		if proxy.prefs.EnableIPv6 {
+			log.Info().Msgf("Binding IPv6 ping server to port 19133")
+			if pingServerV6, err := net.ListenPacket("udp6", ":19133"); err == nil {
+				proxy.pingServerV6 = pingServerV6
+				go proxy.readLoop(proxy.pingServerV6)
+			} else {
+				log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
+			}
+		}
+	}
+
+	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
+	proxyServer, err := net.ListenUDP("udp", proxy.bindAddress)
+	if err != nil {
+		return err
+	}
+	proxy.server = proxyServer
+
+	return nil
+}
+
+// listenPacket prefers SO_REUSEPORT via libp2p/reuseport, but some platforms
+// (notably iSH on iOS) return EINVAL for that option. Fall back to the stdlib
+// listener only for that unsupported-option case so real bind conflicts still
+// surface as errors.
+func listenPacket(network, address string) (net.PacketConn, error) {
+	conn, err := reuse.ListenPacket(network, address)
+	if err == nil {
+		return conn, nil
+	}
+	if !isReuseportUnsupported(err) {
+		return nil, err
+	}
+	log.Warn().Msgf("reuseport listen %s %s unsupported (%v); falling back to net.ListenPacket", network, address, err)
+	return net.ListenPacket(network, address)
+}
+
+func isReuseportUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EINVAL) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Err != nil {
+		if errors.Is(opErr.Err, syscall.EINVAL) {
+			return true
+		}
+		err = opErr.Err
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "invalid argument")
+}
+
 func (proxy *ProxyServer) Close() {
 	log.Info().Msgf("Stopping proxy server")
 
-	// Stop UDP listeners
-	proxy.server.Close()
-	proxy.pingServer.Close()
+	// Stop loops before closing sockets so readLoop does not busy-spin on
+	// "use of closed network connection" while dead is still unset.
+	proxy.dead.Set()
 
+	// Stop UDP listeners (ping listeners may be nil when a DiscoveryHub owns them)
+	if proxy.server != nil {
+		_ = proxy.server.Close()
+	}
+	if proxy.pingServer != nil {
+		_ = proxy.pingServer.Close()
+	}
 	if proxy.pingServerV6 != nil {
-		proxy.pingServerV6.Close()
+		_ = proxy.pingServerV6.Close()
 	}
 
 	// Close all connections
-	proxy.clientMap.Close()
+	if proxy.clientMap != nil {
+		proxy.clientMap.Close()
+	}
+}
 
-	// Stop loops
-	proxy.dead.Set()
+
+// RemoteServer returns the upstream address this proxy forwards to.
+func (proxy *ProxyServer) RemoteServer() string {
+	return proxy.prefs.RemoteServer
+}
+
+// HandleUnconnectedPing processes a discovery ping fanned out from a
+// DiscoveryHub. Uses the dedicated discovery probe path (#117).
+func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) error {
+	if proxy.dead.IsSet() || proxy.server == nil {
+		return fmt.Errorf("proxy not running")
+	}
+	if from == nil {
+		return fmt.Errorf("nil client address")
+	}
+	if len(data) < 1 || data[0] != proto.UnconnectedPingID {
+		return fmt.Errorf("not an unconnected ping")
+	}
+	return proxy.handleDiscoveryPing(from, data)
 }
 
 func (proxy *ProxyServer) startWorkers(listener net.PacketConn) {
@@ -167,11 +278,14 @@ func (proxy *ProxyServer) startWorkers(listener net.PacketConn) {
 func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	log.Info().Msgf("Listener starting up: %s", listener.LocalAddr())
 
-	packetBuffer := make([]byte, maxMTU)
+	packetBuffer := make([]byte, udpRecvBufferSize)
 
 	for !proxy.dead.IsSet() {
 		err := proxy.processDataFromClients(listener, packetBuffer)
 		if err != nil {
+			if proxy.dead.IsSet() {
+				break
+			}
 			log.Warn().Msgf("Error while processing client data: %s", err)
 		}
 	}
@@ -187,13 +301,39 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 // data from the server and send it back to the client.
 func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packetBuffer []byte) error {
 	// Read the next packet from the client
-	read, client, _ := listener.ReadFrom(packetBuffer)
+	read, client, err := listener.ReadFrom(packetBuffer)
+	if err != nil {
+		return err
+	}
 	if read <= 0 {
 		return nil
+	}
+	// A full buffer often means the kernel truncated a larger datagram
+	// (and on some platforms ReadFrom still returns err == nil).
+	if read == len(packetBuffer) {
+		return fmt.Errorf("UDP datagram filled receive buffer (%d bytes); possible truncation", read)
 	}
 
 	data := packetBuffer[:read]
 	log.Trace().Msgf("client recv: %v", data)
+
+	// Drop echoes of our own DialUDP traffic. When -server points at this same
+	// host's :19132 (typical LAN setup), SO_REUSEADDR can deliver our outbound
+	// packets back to the ping listener. Proxying those again would open a new
+	// UDP socket per echo until dial fails with "too many open files".
+	if proxy.clientMap.IsOwnAddress(client) {
+		return nil
+	}
+
+	// LAN discovery must not share the per-client DialUDP session used for
+	// gameplay. After a console disconnects, that socket is often a stale
+	// RakNet association: the remote ignores further Unconnected Pings, while
+	// console re-pings keep refreshing SetReadDeadline + idle lastActive, so
+	// the session never expires and the server vanishes from LAN until restart
+	// (GitHub #117).
+	if data[0] == proto.UnconnectedPingID {
+		return proxy.handleDiscoveryPing(client, data)
+	}
 
 	// Handler triggered when a new client connects and we create a new connetion to the remote server
 	onNewConnection := func(newServerConn *net.UDPConn) {
@@ -214,29 +354,158 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	// Wait 5 seconds for the server to respond to whatever we sent, or else timeout
 	_ = serverConn.SetReadDeadline(time.Now().Add(time.Second * 5))
 
-	if packetID := data[0]; packetID == proto.UnconnectedPingID {
-		log.Info().Msgf("Received LAN ping from client: %s", client.String())
-
-		if proxy.serverOffline {
-			replyBuffer := proto.OfflinePong
-			replyBytes := proxy.rewriteUnconnectedPong(replyBuffer.Bytes())
-
-			proxy.server.WriteTo(replyBytes, client)
-			log.Info().Msgf("Sent server offline pong to client: %v", client.String())
-		}
-
-		// Pass ping through to server even if it's offline
-	}
-
 	// Write packet from client to server
 	_, err = serverConn.Write(data)
+	if err == nil {
+		return nil
+	}
+
+	// Write often consumes the pending ICMP error before processDataFromServer's
+	// ReadFrom sees it. Meanwhile LAN pings keep refreshing SetReadDeadline and
+	// ClientMap lastActive, so the session never times out and never marks the
+	// server offline — producing a spam of "connection refused" warnings (#79).
+	if isOfflineError(err) {
+		proxy.markServerOffline()
+		proxy.clientMap.Delete(client)
+		return nil
+	}
+
 	return err
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(err.Error(), "timeout")
+}
+
+func isConnRefusedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
+}
+
+// noteUpstreamReadError updates offline state from a failed server read.
+// Connection refused marks offline immediately. Timeouts only do so after
+// offlineTimeoutThreshold consecutive failures so one flaky UDP deadline
+// does not broadcast OfflinePong to every LAN client (#104).
+func (proxy *ProxyServer) noteUpstreamReadError(err error) {
+	log.Warn().Msgf("%v", err)
+
+	if isConnRefusedError(err) {
+		proxy.offlineTimeouts = 0
+		proxy.markServerOffline()
+		return
+	}
+	if isTimeoutError(err) {
+		proxy.offlineTimeouts++
+		if proxy.offlineTimeouts >= offlineTimeoutThreshold {
+			proxy.markServerOffline()
+		}
+		return
+	}
+}
+
+// handleDiscoveryPing answers a console/LAN Unconnected Ping using a fresh
+// probe to the remote server, independent of any gameplay session.
+func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) error {
+	log.Info().Msgf("Received LAN ping from client: %s", client.String())
+
+	pong, err := proxy.probeRemoteUnconnectedPong(ping)
+	if err != nil {
+		proxy.markServerOffline()
+		if _, werr := proxy.server.WriteTo(proxy.buildOfflinePong(ping), client); werr != nil {
+			return werr
+		}
+		log.Info().Msgf("Sent server offline pong to client: %v", client.String())
+		return nil
+	}
+
+	proxy.noteUpstreamReachable()
+
+	pong = proxy.rewriteUnconnectedPong(pong)
+	if _, err := proxy.server.WriteTo(pong, client); err != nil {
+		return err
+	}
+	log.Info().Msgf("Sent LAN pong to client: %v", client.String())
+	return nil
+}
+
+// probeRemoteUnconnectedPong dials a one-shot UDP socket to the remote and
+// waits for an Unconnected Pong. A fresh local port avoids stale RakNet state.
+func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error) {
+	conn, err := net.DialUDP("udp", nil, proxy.remoteServerAddress)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(discoveryPingTimeout))
+	if _, err := conn.Write(ping); err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, udpRecvBufferSize)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return nil, err
+		}
+		if n < 1 {
+			continue
+		}
+		if n == len(buf) {
+			continue
+		}
+		if buf[0] != proto.UnconnectedPongID {
+			continue
+		}
+		out := make([]byte, n)
+		copy(out, buf[:n])
+		return out, nil
+	}
+}
+
+func (proxy *ProxyServer) markServerOffline() {
+	if proxy.serverOffline {
+		return
+	}
+	log.Warn().Msgf("Server seems to be offline :(")
+	log.Warn().Msgf("We'll keep trying to connect...")
+	proxy.serverOffline = true
+}
+
+func (proxy *ProxyServer) noteUpstreamReachable() {
+	proxy.offlineTimeouts = 0
+	if proxy.serverOffline {
+		log.Info().Msgf("Server is back online!")
+		proxy.serverOffline = false
+	}
+}
+
+// buildOfflinePong returns the canned offline advertisement, echoing the
+// client's ping time so consoles can match the response to their request.
+func (proxy *ProxyServer) buildOfflinePong(ping []byte) []byte {
+	reply := append([]byte(nil), proto.OfflinePong.Bytes()...)
+	if len(ping) >= 9 && len(reply) >= 9 {
+		copy(reply[1:9], ping[1:9])
+	}
+	return proxy.rewriteUnconnectedPong(reply)
 }
 
 // Proxies packets sent by the server to us for a specific Minecraft client back to
 // that client's UDP connection.
 func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client net.Addr) {
-	buffer := make([]byte, maxMTU)
+	buffer := make([]byte, udpRecvBufferSize)
 
 	for !proxy.dead.IsSet() {
 		// Read the next packet from the server
@@ -247,16 +516,20 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 
 		// Read error
 		if err != nil {
-			log.Warn().Msgf("%v", err)
-
-			offlineError := offlineErrorRegex.MatchString(err.Error())
-
-			if offlineError && !proxy.serverOffline {
-				log.Warn().Msgf("Server seems to be offline :(")
-				log.Warn().Msgf("We'll keep trying to connect...")
-				proxy.serverOffline = true
+			// Conn closed by idle cleanup / offline write-path Delete — expected.
+			if errors.Is(err, net.ErrClosed) {
+				break
 			}
 
+			// Game-session read errors (including the 5s deadline after a
+			// console disconnect) are not a reliable "server offline" signal.
+			// LAN discovery uses a dedicated probe (#117). Connection refused
+			// on an active session still marks offline (#79/#104).
+			if isConnRefusedError(err) {
+				proxy.noteUpstreamReadError(err)
+			} else if !offlineErrorRegex.MatchString(err.Error()) {
+				log.Warn().Msgf("%v", err)
+			}
 			break
 		}
 
@@ -265,20 +538,16 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 			continue
 		}
 
-		if proxy.serverOffline {
-			log.Info().Msgf("Server is back online!")
-			proxy.serverOffline = false
+		if read == len(buffer) {
+			log.Warn().Msgf("UDP datagram from server filled receive buffer (%d bytes); dropping possibly truncated packet", read)
+			continue
 		}
+
+		proxy.noteUpstreamReachable()
 
 		// Resize data to byte count from 'read'
 		data := buffer[:read]
 		log.Trace().Msgf("server recv: %v", data)
-
-		// Rewrite Unconnected Pong packets
-		if packetID := data[0]; packetID == proto.UnconnectedPongID {
-			data = proxy.rewriteUnconnectedPong(data)
-			log.Info().Msgf("Sent LAN pong to client: %v", client.String())
-		}
 
 		proxy.server.WriteTo(data, client)
 	}
@@ -290,17 +559,23 @@ func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
 
 	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
-		// Overwrite the server ID with one unique to this phantom instance.
-		// If we don't do this, the client will get confused if you restart phantom.
-		packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
+		// Overwrite the server ID with one unique to this proxy.
+		// If we don't do this, the client will get confused if you restart phantom,
+		// and multiple -server backends in one process would look identical.
+		id := make([]byte, 8)
+		binary.BigEndian.PutUint64(id, uint64(proxy.serverID))
+		packet.ID = id
+		packet.Pong.ServerID = fmt.Sprintf("%d", proxy.serverID)
 
-		// Overwrite port numbers sent back from server (if any)
-		if packet.Pong.Port4 != "" && !proxy.prefs.RemovePorts {
-			packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
-			packet.Pong.Port6 = packet.Pong.Port4
-		} else if proxy.prefs.RemovePorts {
+		// Always advertise phantom's bind port. Upstream MOTDs (notably Geyser)
+		// often omit Port4/Port6; leaving them empty makes consoles fall back to
+		// 19132 or skip the LAN/Friends entry entirely.
+		if proxy.prefs.RemovePorts {
 			packet.Pong.Port4 = ""
 			packet.Pong.Port6 = ""
+		} else {
+			packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
+			packet.Pong.Port6 = packet.Pong.Port4
 		}
 
 		packetBuffer := packet.Build()

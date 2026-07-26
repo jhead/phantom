@@ -24,6 +24,63 @@ $ chmod u+x ./phantom-<os>
 
 Just replace `<os>` with macos, linux, etc. for the correct OS you're using.
 
+**Raspberry Pi / ARM**
+
+Pick the binary from your *OS* architecture (`uname -m`), not the marketing
+CPU name. A Pi 3/4/5 is "ARMv8" hardware, but a 32-bit Raspberry Pi OS still
+needs the 32-bit build:
+
+| `uname -m` | Download |
+|---|---|
+| `aarch64` or `arm64` | `phantom-linux-arm8` (alias: `phantom-linux-arm64`) |
+| `armv7l` | `phantom-linux-arm7` |
+| `armv6l` (Pi Zero / Pi 1) | `phantom-linux-arm6` |
+
+`phantom-linux-arm8` is **64-bit only**. Using it on 32-bit Pi OS typically
+fails with `Illegal instruction` or `Exec format error` — use `arm7` (or
+`arm6`) instead.
+
+**Termux on Android**
+
+Termux can run the regular **Linux ARM** builds — you do **not** need a
+`GOOS=android` binary (that requires the Android NDK). Pick by `uname -m`:
+
+| `uname -m` | Download |
+|---|---|
+| `aarch64` or `arm64` | `phantom-linux-arm8` |
+| `armv7l` | `phantom-linux-arm7` |
+| older / unsure | `phantom-linux-arm5` (widest compatibility) |
+
+Do **not** use plain `phantom-linux` (that is amd64). Copy the binary into
+Termux home (`$HOME`) — shared storage under `/storage/...` is often mounted
+`noexec`, which causes `Permission denied` even after `chmod`. Then:
+
+```bash
+cd $HOME
+chmod u+x ./phantom-linux-arm8   # or arm7 / arm5
+./phantom-linux-arm8 -server example.com:19132
+```
+
+Run the binary as its own command; do not append `-server` to `cd`.
+
+**iSH on iOS**
+
+iSH provides a 32-bit x86 Linux userspace (`uname -m` is typically `i686` or
+`x86_64` under emulation of 32-bit userspace — use the x86 build). Download or
+build `phantom-linux-x86`, not the ARM or amd64 Linux binaries:
+
+```bash
+chmod u+x ./phantom-linux-x86
+./phantom-linux-x86 -server example.com:19132
+```
+
+Build it yourself with:
+
+```bash
+make bin/phantom-linux-x86
+# or: CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -o bin/phantom-linux-x86 ./cmd
+```
+
 ## Usage
 
 Open up a command prompt (Windows) or terminal (macOS & Linux) to the location
@@ -35,7 +92,7 @@ you did something wrong. Or I did ;)
 Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
-  -6	Optional: Enables IPv6 support on port 19133 (experimental)
+  -6	Optional: Same as -ipv6 (legacy; broken in PowerShell — use -ipv6)
   -bind string
     	Optional: IP address to listen on. Defaults to all interfaces. (default "0.0.0.0")
   -bind_port int
@@ -43,6 +100,8 @@ Options:
     	Note that phantom always binds to port 19132 as well, so both ports need to be open.
   -debug
     	Optional: Enables debug logging
+  -ipv6
+    	Optional: Enables IPv6 support on port 19133 (experimental)
   -remove_ports
     	Optional: Forces ports to be excluded from pong packets (experimental)
   -server string
@@ -79,14 +138,22 @@ Same as above but bind the proxy server to local IP 10.0.0.5 and port 19133:
 ./phantom-<os> -bind 10.0.0.5 -bind_port 19133 -server lax.mcbr.cubed.host:19132
 ```
 
-**Running multiple instances**
+**Running multiple servers**
 
-If you have multiple Bedrock servers, you can run phantom multiple times on
-the same device to allow all of your servers to show up on the LAN list. All
-you have to do is start one instance of phantom for each server and set the
-`-server` flag appropriately. You don't need to use `-bind` or change the port.
-But you probably do need to make sure you have a firewall rule that allows
-all UDP traffic for the phantom executable.
+If you have multiple Bedrock servers, pass each one to a **single** phantom
+process with repeated or comma-separated `-server` flags:
+
+```bash
+./phantom-<os> -server 192.168.1.13:19134 -server 192.168.1.13:19136
+# or
+./phantom-<os> -server 192.168.1.13:19134,192.168.1.13:19136
+```
+
+Phantom binds LAN discovery (`:19132`) once and answers for every upstream
+server, so they all appear in the Friends/LAN list at the same time. Running
+multiple phantom *processes* cannot share `:19132` correctly — only one will
+see traffic — so use multiple `-server` flags instead. You probably also need
+a firewall rule that allows all UDP traffic for the phantom executable.
 
 **A note on `-bind`:**
 
@@ -138,7 +205,8 @@ computer, a VM, or even with a Minecraft hosting service.
 ## Supported platforms
 
 - This tool should work on Windows, macOS, and Linux.
-- ARM builds are available for Raspberry Pi and similar SOCs.
+- A `phantom-linux-x86` (386) build is available for iSH on iOS.
+- ARM builds are available for Raspberry Pi, Termux on Android, and similar SOCs (see Installing for which binary to use).
 - Minecraft for Windows 10, iOS/Android, Xbox One, and PS4 are currently supported.
 - **Nintendo Switch is not supported.**
 
@@ -147,6 +215,35 @@ On macOS, you'll be prompted automatically. On Windows, you may need to go into
 your Windows Firewall settings and open up all UDP ports for phantom.
 
 ## Troubleshooting
+
+**`Illegal instruction` (or `Exec format error`) on a Raspberry Pi**
+
+You almost certainly downloaded the wrong ARM build. `phantom-linux-arm8` is
+64-bit (`aarch64`). On 32-bit Raspberry Pi OS (`uname -m` shows `armv7l` or
+`armv6l`), use `phantom-linux-arm7` or `phantom-linux-arm6` instead — even if
+the board itself is ARMv8.
+
+**`Permission denied` or `cannot execute binary file` in Termux**
+
+Move the binary into `$HOME` (not `/storage/...`), `chmod u+x`, and use the
+ARM Linux build that matches `uname -m` — not `phantom-linux` (amd64) and not
+an Android/`GOOS=android` build. See Installing → Termux on Android.
+
+**`cd: too many arguments`**
+
+`cd` only changes directory. Run phantom separately, e.g.
+`cd ~/phantom && ./phantom-linux-arm8 -server 1.2.3.4:19132`.
+
+**`syntax error` / `unexpected ")"` when starting phantom in iSH**
+
+You downloaded the wrong architecture. iSH needs `phantom-linux-x86` (linux/386).
+ARM and amd64 Linux binaries look like garbage to the shell and produce syntax
+errors. See Installing → iSH on iOS.
+
+**`listen udp4 :19132: invalid argument` on iSH**
+
+Older builds required SO_REUSEPORT, which iSH rejects. Current builds fall back
+to a normal UDP listen when reuseport is unsupported.
 
 **My server isn't showing up on the list but it's online and phantom is showing connections!**
 
