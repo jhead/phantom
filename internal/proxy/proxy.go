@@ -15,7 +15,15 @@ import (
 	reuse "github.com/libp2p/go-reuseport"
 )
 
-const maxMTU = 1472
+// udpRecvBufferSize is the per-read buffer for proxied UDP datagrams.
+//
+// RakNet advertises MTU up to 1492 including IP(20)+UDP(8) headers, so a
+// well-formed max UDP payload is 1464. Some Bedrock stacks still emit slightly
+// larger datagrams (observed ≥1474), and a too-small ReadFrom buffer silently
+// truncates on several platforms — including macOS, where the error is nil.
+// Resource-pack transfer is mostly full-MTU traffic, so truncation surfaces as
+// clients stuck on "Loading resources...". Use the full UDP datagram limit.
+const udpRecvBufferSize = 65535
 
 var idleCheckInterval = 5 * time.Second
 
@@ -135,6 +143,10 @@ func (proxy *ProxyServer) Start() error {
 func (proxy *ProxyServer) Close() {
 	log.Info().Msgf("Stopping proxy server")
 
+	// Stop loops before closing sockets so readLoop does not busy-spin on
+	// "use of closed network connection" while dead is still unset.
+	proxy.dead.Set()
+
 	// Stop UDP listeners
 	proxy.server.Close()
 	proxy.pingServer.Close()
@@ -145,9 +157,6 @@ func (proxy *ProxyServer) Close() {
 
 	// Close all connections
 	proxy.clientMap.Close()
-
-	// Stop loops
-	proxy.dead.Set()
 }
 
 func (proxy *ProxyServer) startWorkers(listener net.PacketConn) {
@@ -167,11 +176,14 @@ func (proxy *ProxyServer) startWorkers(listener net.PacketConn) {
 func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	log.Info().Msgf("Listener starting up: %s", listener.LocalAddr())
 
-	packetBuffer := make([]byte, maxMTU)
+	packetBuffer := make([]byte, udpRecvBufferSize)
 
 	for !proxy.dead.IsSet() {
 		err := proxy.processDataFromClients(listener, packetBuffer)
 		if err != nil {
+			if proxy.dead.IsSet() {
+				break
+			}
 			log.Warn().Msgf("Error while processing client data: %s", err)
 		}
 	}
@@ -187,9 +199,17 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 // data from the server and send it back to the client.
 func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packetBuffer []byte) error {
 	// Read the next packet from the client
-	read, client, _ := listener.ReadFrom(packetBuffer)
+	read, client, err := listener.ReadFrom(packetBuffer)
+	if err != nil {
+		return err
+	}
 	if read <= 0 {
 		return nil
+	}
+	// A full buffer often means the kernel truncated a larger datagram
+	// (and on some platforms ReadFrom still returns err == nil).
+	if read == len(packetBuffer) {
+		return fmt.Errorf("UDP datagram filled receive buffer (%d bytes); possible truncation", read)
 	}
 
 	data := packetBuffer[:read]
@@ -236,7 +256,7 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 // Proxies packets sent by the server to us for a specific Minecraft client back to
 // that client's UDP connection.
 func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client net.Addr) {
-	buffer := make([]byte, maxMTU)
+	buffer := make([]byte, udpRecvBufferSize)
 
 	for !proxy.dead.IsSet() {
 		// Read the next packet from the server
@@ -262,6 +282,11 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 
 		// Empty read
 		if read < 1 {
+			continue
+		}
+
+		if read == len(buffer) {
+			log.Warn().Msgf("UDP datagram from server filled receive buffer (%d bytes); dropping possibly truncated packet", read)
 			continue
 		}
 
