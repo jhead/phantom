@@ -24,6 +24,22 @@ $ chmod u+x ./phantom-<os>
 
 Just replace `<os>` with macos, linux, etc. for the correct OS you're using.
 
+**Raspberry Pi / ARM**
+
+Pick the binary from your *OS* architecture (`uname -m`), not the marketing
+CPU name. A Pi 3/4/5 is "ARMv8" hardware, but a 32-bit Raspberry Pi OS still
+needs the 32-bit build:
+
+| `uname -m` | Download |
+|---|---|
+| `aarch64` or `arm64` | `phantom-linux-arm8` (alias: `phantom-linux-arm64`) |
+| `armv7l` | `phantom-linux-arm7` |
+| `armv6l` (Pi Zero / Pi 1) | `phantom-linux-arm6` |
+
+`phantom-linux-arm8` is **64-bit only**. Using it on 32-bit Pi OS typically
+fails with `Illegal instruction` or `Exec format error` — use `arm7` (or
+`arm6`) instead.
+
 ## Usage
 
 Open up a command prompt (Windows) or terminal (macOS & Linux) to the location
@@ -138,7 +154,7 @@ computer, a VM, or even with a Minecraft hosting service.
 ## Supported platforms
 
 - This tool should work on Windows, macOS, and Linux.
-- ARM builds are available for Raspberry Pi and similar SOCs.
+- ARM builds are available for Raspberry Pi and similar SOCs (see Installing for which binary to use).
 - Minecraft for Windows 10, iOS/Android, Xbox One, and PS4 are currently supported.
 - **Nintendo Switch is not supported.**
 
@@ -147,6 +163,13 @@ On macOS, you'll be prompted automatically. On Windows, you may need to go into
 your Windows Firewall settings and open up all UDP ports for phantom.
 
 ## Troubleshooting
+
+**`Illegal instruction` (or `Exec format error`) on a Raspberry Pi**
+
+You almost certainly downloaded the wrong ARM build. `phantom-linux-arm8` is
+64-bit (`aarch64`). On 32-bit Raspberry Pi OS (`uname -m` shows `armv7l` or
+`armv6l`), use `phantom-linux-arm7` or `phantom-linux-arm6` instead — even if
+the board itself is ARMv8.
 
 **My server isn't showing up on the list but it's online and phantom is showing connections!**
 
