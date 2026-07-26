@@ -82,6 +82,13 @@ func (cm *ClientMap) idleCleanupLoop() {
 	}
 }
 
+// Len returns the number of active client connections.
+func (cm *ClientMap) Len() int {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	return len(cm.clients)
+}
+
 func (cm *ClientMap) Delete(clientAddr net.Addr) {
 	key := clientAddr.String()
 
