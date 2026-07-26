@@ -59,7 +59,8 @@ var OfflinePong = UnconnectedPing{
 		ProtocolVersion: "390",
 		Version:         "1.14.60",
 		Players:         "0",
-		MaxPlayers:      "0",
+		// Non-zero capacity: some consoles omit full/zero-slot entries from Friends.
+		MaxPlayers:      "1",
 		GameType:        "Creative",
 		NintendoLimited: "1",
 		// Placeholder ports so rewriteUnconnectedPong overwrites them with

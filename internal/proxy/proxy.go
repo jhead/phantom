@@ -38,14 +38,31 @@ const offlineTimeoutThreshold = 3
 
 var idleCheckInterval = 5 * time.Second
 
-// discoveryPingTimeout bounds how long a LAN probe waits for upstream. Keep this
-// below compat PingTimeout (2s) so clients pinging the bind port get a timely reply.
-var discoveryPingTimeout = 1500 * time.Millisecond
+// Discovery probe deadlines (nanoseconds). Stored atomically so tests can shorten
+// them without racing the background health-check goroutine.
+var (
+	discoveryPingTimeoutNanos          atomic.Int64
+	discoveryRecoveryProbeTimeoutNanos atomic.Int64
+	discoveryHealthIntervalNanos       atomic.Int64
+)
 
-// discoveryRecoveryProbeTimeout is used once the server is already marked offline:
-// a quick check whether upstream came back without making every LAN ping wait out
-// the full discoveryPingTimeout.
-var discoveryRecoveryProbeTimeout = 500 * time.Millisecond
+func init() {
+	discoveryPingTimeoutNanos.Store(int64(1500 * time.Millisecond))
+	discoveryRecoveryProbeTimeoutNanos.Store(int64(500 * time.Millisecond))
+	discoveryHealthIntervalNanos.Store(int64(2 * time.Second))
+}
+
+func discoveryPingTimeout() time.Duration {
+	return time.Duration(discoveryPingTimeoutNanos.Load())
+}
+
+func discoveryRecoveryProbeTimeout() time.Duration {
+	return time.Duration(discoveryRecoveryProbeTimeoutNanos.Load())
+}
+
+func discoveryHealthInterval() time.Duration {
+	return time.Duration(discoveryHealthIntervalNanos.Load())
+}
 
 type ProxyServer struct {
 	bindAddress         *net.UDPAddr
@@ -184,6 +201,10 @@ func (proxy *ProxyServer) listen() error {
 		return err
 	}
 	proxy.server.Store(proxyServer)
+
+	// Learn offline/online before the first console ping, and recover without
+	// making OfflinePong wait on a synchronous probe.
+	proxy.startUpstreamHealthCheck()
 
 	return nil
 }
@@ -438,6 +459,18 @@ func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) erro
 		return fmt.Errorf("proxy not running")
 	}
 
+	// Already offline: reply immediately. Waiting on a recovery probe made
+	// OfflinePong arrive after console discovery timeouts — blackholed remotes
+	// take the full deadline, so the LAN entry never appeared even though logs
+	// later showed a pong was sent.
+	if proxy.isServerOffline() {
+		if _, err := server.WriteTo(proxy.buildOfflinePong(ping), client); err != nil {
+			return err
+		}
+		log.Info().Msgf("Sent server offline pong to client: %v", client.String())
+		return nil
+	}
+
 	pong, err := proxy.probeRemoteUnconnectedPong(ping)
 	if err != nil {
 		proxy.markServerOffline()
@@ -458,6 +491,49 @@ func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) erro
 	return nil
 }
 
+// startUpstreamHealthCheck probes the remote on a timer so OfflinePong can be
+// advertised before the first LAN ping, and so recovery does not require a
+// client to wait out a synchronous probe.
+func (proxy *ProxyServer) startUpstreamHealthCheck() {
+	go func() {
+		proxy.probeUpstreamHealth()
+		ticker := time.NewTicker(discoveryHealthInterval())
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if proxy.dead.IsSet() {
+					return
+				}
+				proxy.probeUpstreamHealth()
+			}
+		}
+	}()
+}
+
+func (proxy *ProxyServer) probeUpstreamHealth() {
+	if proxy.dead.IsSet() || proxy.dataConn() == nil {
+		return
+	}
+	_, err := proxy.probeRemoteUnconnectedPong(healthCheckPing())
+	if err != nil {
+		proxy.markServerOffline()
+		return
+	}
+	proxy.noteUpstreamReachable()
+}
+
+// healthCheckPing is a minimal valid Unconnected Ping for background probes.
+func healthCheckPing() []byte {
+	magic := []byte{0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78}
+	out := make([]byte, 0, 1+8+8+16)
+	out = append(out, proto.UnconnectedPingID)
+	out = append(out, 0, 0, 0, 0, 0, 0, 0, 0) // ping time
+	out = append(out, 0, 0, 0, 0, 0, 0, 0, 0) // client GUID
+	out = append(out, magic...)
+	return out
+}
+
 // probeRemoteUnconnectedPong dials a one-shot UDP socket to the remote and
 // waits for an Unconnected Pong. A fresh local port avoids stale RakNet state.
 func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error) {
@@ -467,9 +543,9 @@ func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error
 	}
 	defer conn.Close()
 
-	timeout := discoveryPingTimeout
+	timeout := discoveryPingTimeout()
 	if proxy.isServerOffline() {
-		timeout = discoveryRecoveryProbeTimeout
+		timeout = discoveryRecoveryProbeTimeout()
 	}
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := conn.Write(ping); err != nil {

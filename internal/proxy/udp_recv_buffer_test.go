@@ -5,6 +5,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/jhead/phantom/internal/proto"
 )
 
 func TestUDPRecvBufferCoversOversizedRakNetDatagrams(t *testing.T) {
@@ -60,19 +62,13 @@ func TestProxyForwardsLargeDatagramsBothWays(t *testing.T) {
 	}
 	defer remote.Close()
 
-	// Exclusive :19132 bind in Start() — skip cleanly if another phantom owns it.
-	probe, err := net.ListenPacket("udp4", "127.0.0.1:19132")
-	if err != nil {
-		t.Skipf("port 19132 unavailable: %v", err)
-	}
-	probe.Close()
-
 	p, err := New(ProxyPrefs{
-		BindAddress:  "127.0.0.1",
-		BindPort:     0,
-		RemoteServer: remote.LocalAddr().String(),
-		IdleTimeout:  time.Minute,
-		NumWorkers:   1,
+		BindAddress:              "127.0.0.1",
+		BindPort:                 0,
+		RemoteServer:             remote.LocalAddr().String(),
+		IdleTimeout:              time.Minute,
+		NumWorkers:               1,
+		DisableDiscoveryListener: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -111,11 +107,21 @@ func TestProxyForwardsLargeDatagramsBothWays(t *testing.T) {
 			t.Fatalf("client write %d: %v", size, err)
 		}
 
-		_ = remote.SetReadDeadline(time.Now().Add(time.Second))
 		rbuf := make([]byte, udpRecvBufferSize)
-		rn, from, err := remote.ReadFrom(rbuf)
-		if err != nil {
-			t.Fatalf("remote read %d: %v", size, err)
+		var rn int
+		var from net.Addr
+		readDeadline := time.Now().Add(2 * time.Second)
+		for {
+			_ = remote.SetReadDeadline(readDeadline)
+			rn, from, err = remote.ReadFrom(rbuf)
+			if err != nil {
+				t.Fatalf("remote read %d: %v", size, err)
+			}
+			// Background health checks send Unconnected Pings; skip them.
+			if rn >= 1 && proto.IsUnconnectedDiscoveryPing(rbuf[0]) {
+				continue
+			}
+			break
 		}
 		if rn != size || !bytes.Equal(rbuf[:rn], up) {
 			t.Fatalf("upstream got n=%d want %d (truncated or corrupt)", rn, size)

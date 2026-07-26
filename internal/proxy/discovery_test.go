@@ -18,6 +18,9 @@ func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
 	defer client.Close()
 
 	// Closed port: discovery probe fails quickly and offline pong is advertised.
+	prev := discoveryPingTimeoutNanos.Swap(int64(200 * time.Millisecond))
+	t.Cleanup(func() { discoveryPingTimeoutNanos.Store(prev) })
+
 	p, err := New(ProxyPrefs{
 		BindAddress:              "127.0.0.1",
 		BindPort:                 0,
@@ -33,10 +36,6 @@ func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-
-	prev := discoveryPingTimeout
-	discoveryPingTimeout = 200 * time.Millisecond
-	defer func() { discoveryPingTimeout = prev }()
 
 	ping := []byte{proto.UnconnectedPingID, 1, 2, 3, 4, 5, 6, 7, 8}
 	if err := p.HandleUnconnectedPing(ping, client.LocalAddr()); err != nil {
@@ -71,6 +70,9 @@ func TestHandleUnconnectedPingOpenConnections(t *testing.T) {
 	}
 	defer client.Close()
 
+	prev := discoveryPingTimeoutNanos.Swap(int64(200 * time.Millisecond))
+	t.Cleanup(func() { discoveryPingTimeoutNanos.Store(prev) })
+
 	p, err := New(ProxyPrefs{
 		BindAddress:              "127.0.0.1",
 		BindPort:                 0,
@@ -86,10 +88,6 @@ func TestHandleUnconnectedPingOpenConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-
-	prev := discoveryPingTimeout
-	discoveryPingTimeout = 200 * time.Millisecond
-	defer func() { discoveryPingTimeout = prev }()
 
 	ping := []byte{proto.UnconnectedPingOpenID, 1, 2, 3, 4, 5, 6, 7, 8}
 	if err := p.HandleUnconnectedPing(ping, client.LocalAddr()); err != nil {

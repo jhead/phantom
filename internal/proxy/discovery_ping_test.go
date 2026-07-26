@@ -130,3 +130,62 @@ func TestBuildOfflinePongEchoesPingTime(t *testing.T) {
 	require.Equal(t, proto.UnconnectedPongID, pong[0])
 	require.True(t, bytes.Equal(pong[1:9], pingTime[:]))
 }
+
+// TestOfflineDiscoveryPingRepliesImmediately guards the LAN-list bug where
+// phantom waited on a recovery probe before sending OfflinePong. Blackholed
+// remotes take the full deadline, so consoles timed out and never showed the
+// offline entry even though a pong was eventually sent.
+func TestOfflineDiscoveryPingRepliesImmediately(t *testing.T) {
+	blackhole, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blackhole.Close() })
+
+	proxyServer, err := New(ProxyPrefs{
+		BindAddress:              "127.0.0.1",
+		BindPort:                 0,
+		RemoteServer:             blackhole.LocalAddr().String(),
+		IdleTimeout:              time.Minute,
+		NumWorkers:               1,
+		DisableDiscoveryListener: true,
+	})
+	require.NoError(t, err)
+
+	dataConn, err := net.ListenUDP("udp", proxyServer.bindAddress)
+	require.NoError(t, err)
+	proxyServer.server.Store(dataConn)
+	t.Cleanup(func() {
+		proxyServer.dead.Set()
+		_ = dataConn.Close()
+		proxyServer.clientMap.Close()
+	})
+
+	// If handleDiscoveryPing waited for recovery, this would delay the reply.
+	prev := discoveryRecoveryProbeTimeoutNanos.Swap(int64(2 * time.Second))
+	t.Cleanup(func() { discoveryRecoveryProbeTimeoutNanos.Store(prev) })
+
+	proxyServer.markServerOffline()
+
+	clientConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = clientConn.Close() })
+	clientAddr := clientConn.LocalAddr().(*net.UDPAddr)
+
+	pingTime := [8]byte{9, 8, 7, 6, 5, 4, 3, 2}
+	started := time.Now()
+	require.NoError(t, proxyServer.handleDiscoveryPing(clientAddr, bareUnconnectedPing(pingTime)))
+	elapsed := time.Since(started)
+	if elapsed >= 200*time.Millisecond {
+		t.Fatalf("offline pong took %v; must not wait on upstream recovery probe", elapsed)
+	}
+
+	_ = clientConn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := clientConn.ReadFromUDP(buf)
+	require.NoError(t, err)
+	require.Equal(t, proto.UnconnectedPongID, buf[0])
+	require.True(t, bytes.Equal(buf[1:9], pingTime[:]), "pong must echo ping time")
+
+	packet, err := proto.ReadUnconnectedPing(buf[:n])
+	require.NoError(t, err)
+	require.Contains(t, packet.Pong.MOTD, "offline")
+}
