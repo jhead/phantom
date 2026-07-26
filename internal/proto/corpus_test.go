@@ -1,10 +1,10 @@
 package proto_test
 
-// T0 - white-box unit tests over the cross-version pong corpus.
+// Unit tests over the cross-version pong corpus.
 //
 // These replay real captured wire bytes (51 Minecraft versions) and
 // hand-authored shape fixtures through the parser and rebuilder, asserting the
-// field-preservation contract from test/compat/DESIGN.md section 4.
+// field-preservation contract in test/compat/DESIGN.md.
 //
 // No network, no subprocess, no Node. Runs everywhere in well under a second.
 
@@ -109,7 +109,7 @@ func TestCapturedCorpusRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("round-trip failed: %v", err)
 			}
-			corpus.Check(t, "t0/trailing-fields-preserved", func() error {
+			corpus.Check(t, "unit/trailing-fields-preserved", func() error {
 				return assertFieldsPreserved(e.MOTD, out)
 			})
 		})
@@ -118,7 +118,7 @@ func TestCapturedCorpusRoundTrip(t *testing.T) {
 
 // TestCapturedCorpusEchoesPingTime validates the corpus itself: every real
 // server echoed the exact ping time we sent. This is the behaviour phantom's
-// offline pong fails to reproduce (see t1/offline-pong-echoes-ping-time), so
+// offline pong fails to reproduce (see e2e/offline-pong-echoes-ping-time), so
 // pinning it here documents the requirement with evidence.
 func TestCapturedCorpusEchoesPingTime(t *testing.T) {
 	sent := corpus.CapturedPingTime()
@@ -157,9 +157,9 @@ func TestSyntheticShapes(t *testing.T) {
 
 			// Only fixtures carrying more fields than phantom's 12-field struct
 			// are expected to lose data today.
-			id := "t0/no-such-failure"
+			id := "unit/no-such-failure"
 			if corpus.RealFieldCount(e.MOTDString()) > 12 {
-				id = "t0/trailing-fields-preserved"
+				id = "unit/trailing-fields-preserved"
 			}
 			corpus.Check(t, id, func() error {
 				return assertFieldsPreserved(e.MOTDString(), out)
@@ -176,9 +176,9 @@ func TestMalformedFrames(t *testing.T) {
 	// from this map are expected to be rejected correctly today - phantom does
 	// catch outright truncation, just not semantic defects like a bad magic.
 	xfailByID := map[string]string{
-		"malformed/length-exceeds-body": "t0/short-read-rejected",
-		"malformed/bad-magic":           "t0/magic-validated",
-		"malformed/wrong-packet-id":     "t0/packet-id-validated",
+		"malformed/length-exceeds-body": "unit/short-read-rejected",
+		"malformed/bad-magic":           "unit/magic-validated",
+		"malformed/wrong-packet-id":     "unit/packet-id-validated",
 	}
 
 	for _, e := range corpus.Synthetic() {
@@ -209,7 +209,7 @@ func TestMalformedFrames(t *testing.T) {
 
 			id, ok := xfailByID[e.ID]
 			if !ok {
-				id = "t0/no-such-failure"
+				id = "unit/no-such-failure"
 			}
 			corpus.Check(t, id, func() error {
 				if err == nil {

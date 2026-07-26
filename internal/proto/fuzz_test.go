@@ -1,6 +1,6 @@
 package proto_test
 
-// T0 - fuzzing.
+// Fuzzing the pong parser.
 //
 // ReadUnconnectedPing parses untrusted bytes straight off a UDP socket with no
 // length or magic validation, which makes it the highest-value fuzz target in

@@ -1,12 +1,12 @@
 {
   "_comment": [
-    "T1 version matrix: which Minecraft versions the live end-to-end tier exercises,",
-    "and how they are distributed across CI shards.",
+    "Which Minecraft versions the end-to-end tests exercise, and how they are",
+    "distributed across CI shards.",
     "",
-    "This is NOT the full version list. T0 sweeps all 51 supported versions from",
-    "internal/corpus/data/captured.json in under a second; booting a real client and",
-    "server stack per version is far too slow for that, so T1 samples: the oldest",
-    "supported version, the newest, and the newest of each minor line in between.",
+    "This is NOT the full version list. The unit tests sweep all 51 supported",
+    "versions from internal/corpus/data/captured.json in under a second. Booting a",
+    "real client and server stack per version is far too slow for that, so the e2e",
+    "tests sample: the oldest supported version, the newest, and the newest of each minor line in between.",
     "",
     "Sharding exists for isolation, not just speed. phantom binds UDP :19132",
     "unconditionally and sets SO_REUSEPORT, so two concurrent instances on one host",

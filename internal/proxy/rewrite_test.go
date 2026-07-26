@@ -1,13 +1,13 @@
 package proxy
 
-// T0 - white-box unit tests for the pong rewrite.
+// Unit tests for the pong rewrite.
 //
 // This file lives in `package proxy` rather than in test/compat because
 // rewriteUnconnectedPong is an unexported method; Go offers no way to reach it
-// from an external test package. That is the constraint that splits T0 across
-// internal/proto and internal/proxy. See test/compat/DESIGN.md section 3.
+// from an external test package. That is what splits the unit tests across
+// internal/proto and internal/proxy. See test/compat/DESIGN.md.
 //
-// The rewrite contract (DESIGN.md section 4): phantom replaces the server ID
+// The rewrite contract (see DESIGN.md): phantom replaces the server ID
 // and the advertised ports, and must leave every other field exactly as the
 // upstream server sent it.
 
@@ -168,7 +168,7 @@ func TestRewritePreservesTrailingFields(t *testing.T) {
 		t.Run(e.MC, func(t *testing.T) {
 			in, out, _ := rewriteFields(t, newTestProxy(false), e.Frame())
 
-			corpus.Check(t, "t0/trailing-fields-preserved", func() error {
+			corpus.Check(t, "unit/trailing-fields-preserved", func() error {
 				if len(out) < len(in) {
 					return corpus.Errorf(
 						"rewrite dropped %d trailing field(s) %q (upstream sent %d, phantom emitted %d)",
@@ -211,7 +211,7 @@ func TestRewriteRewritesBinaryGUID(t *testing.T) {
 			frame := e.Frame()
 			out := newTestProxy(false).rewriteUnconnectedPong(frame)
 
-			corpus.Check(t, "t0/binary-guid-rewritten", func() error {
+			corpus.Check(t, "unit/binary-guid-rewritten", func() error {
 				if bytes.Equal(out[9:17], frame[9:17]) {
 					return corpus.Errorf(
 						"binary ServerGUID passed through unchanged (%x); "+

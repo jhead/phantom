@@ -57,11 +57,11 @@ prep:
 clean:
 	rm -rf bin
 
-# T0 - white-box unit tests over the cross-version corpus. Fast, no deps.
+# Unit tests over the cross-version corpus. Fast, no deps.
 test:
 	go test ./...
 
-# T1 - black-box end-to-end against a real phantom subprocess.
+# End-to-end tests against a real phantom subprocess.
 # Needs `npm ci` in test/compat/node first for the `node` tag to do anything;
 # without it those cases skip rather than fail.
 test-e2e:

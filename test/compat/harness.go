@@ -1,4 +1,4 @@
-// Package compat is the black-box (T1) compatibility harness.
+// Package compat is the end-to-end compatibility harness.
 //
 // BLACK-BOX RULE: this package must not import phantom's implementation
 // packages (internal/proto, internal/proxy, internal/clientmap). It knows only

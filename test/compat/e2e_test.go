@@ -2,7 +2,7 @@
 
 package compat
 
-// T1 - black-box end-to-end tests.
+// End-to-end tests.
 //
 // Everything here drives a real phantom subprocess over real UDP sockets. No
 // knowledge of phantom's internals is used or permitted; TestBlackBoxRuleHolds
@@ -98,7 +98,7 @@ func TestTrailingFieldsReachClient(t *testing.T) {
 
 	in, out := fieldsOf(motd), fieldsOf(motdOf(t, pong))
 
-	corpus.Check(t, "t0/trailing-fields-preserved", func() error {
+	corpus.Check(t, "unit/trailing-fields-preserved", func() error {
 		if len(out) < len(in) {
 			return corpus.Errorf("client received %d fields, upstream sent %d; lost %q",
 				len(out), len(in), in[len(out):])
@@ -267,7 +267,7 @@ func TestOfflinePong(t *testing.T) {
 			t.Fatalf("phantom never sent an offline pong\n--- output ---\n%s", p.Output())
 		}
 
-		corpus.Check(t, "t1/offline-pong-echoes-ping-time", func() error {
+		corpus.Check(t, "e2e/offline-pong-echoes-ping-time", func() error {
 			if !bytes.Equal(pong[1:9], want) {
 				return corpus.Errorf(
 					"offline pong carries ping time %x, want the client's %x; "+
@@ -286,7 +286,7 @@ func TestOfflinePong(t *testing.T) {
 			t.Fatalf("phantom never sent an offline pong\n--- output ---\n%s", p.Output())
 		}
 
-		corpus.Check(t, "t1/offline-pong-nonzero-guid", func() error {
+		corpus.Check(t, "e2e/offline-pong-nonzero-guid", func() error {
 			if bytes.Equal(pong[9:17], make([]byte, 8)) {
 				return corpus.Errorf(
 					"offline pong advertises binary ServerGUID 0; every phantom whose " +
@@ -305,7 +305,7 @@ func TestOfflinePong(t *testing.T) {
 			t.Fatalf("phantom never sent an offline pong for 0x01\n--- output ---\n%s", p.Output())
 		}
 
-		corpus.Check(t, "t1/offline-pong-answers-0x02", func() error {
+		corpus.Check(t, "e2e/offline-pong-answers-0x02", func() error {
 			if waitForOfflinePongWithin(t, p, corpus.PingOpenID, DefaultPingTime(), negativeWait) == nil {
 				return corpus.Errorf(
 					"a client pinging with 0x02 (Unconnected Ping Open Connections) " +
@@ -426,7 +426,7 @@ func TestConcurrentClientsAreIsolated(t *testing.T) {
 }
 
 // TestBlackBoxRuleHolds enforces the tier boundary from DESIGN.md section 3.
-// Without this, "T1 is black box" is a convention that decays the first time
+// Without this, the black-box rule is a convention that decays the first time
 // someone reaches for a convenient internal helper.
 func TestBlackBoxRuleHolds(t *testing.T) {
 	forbidden := []string{
@@ -452,9 +452,9 @@ func TestBlackBoxRuleHolds(t *testing.T) {
 		for _, line := range strings.Split(deps, "\n") {
 			if strings.TrimSpace(line) == pkg {
 				t.Errorf("test/compat imports %s.\n"+
-					"T1 is the black-box tier: it may know only the phantom binary, its "+
+					"the e2e suite may know only the phantom binary, its "+
 					"CLI flags, and UDP. If an assertion needs phantom's internals, it "+
-					"belongs in T0 (internal/proto or internal/proxy).", pkg)
+					"belongs in a unit test (internal/proto or internal/proxy).", pkg)
 			}
 		}
 	}

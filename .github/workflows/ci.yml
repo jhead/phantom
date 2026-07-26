@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
   # Pins the toolchain to go.mod's declared minimum, so accidental use of a
-  # newer language feature is caught. Linux only - see the note in `t0`.
-  unit:
+  # newer language feature is caught. Linux only, see the note on the unit job.
+  vet:
     name: vet + race
     runs-on: ubuntu-latest
     steps:
@@ -40,11 +40,11 @@ jobs:
       - name: go test -race
         run: go test -race ./...
 
-  # T0: white-box unit tests over the cross-version corpus. Pure Go, no network,
-  # no Node, ~1s. The OS matrix is nearly free here and catches path, endianness
-  # and line-ending surprises that only ever show up off Linux.
-  t0:
-    name: T0 corpus (${{ matrix.os }})
+  # Unit tests over the cross-version corpus. Pure Go, no network, no Node, ~1s.
+  # The OS matrix is nearly free here and catches path, endianness and
+  # line-ending surprises that only ever show up off Linux.
+  unit:
+    name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -62,7 +62,7 @@ jobs:
           # pre-existing tests like internal/util.
           #
           # go.mod's directive stays at the true LANGUAGE minimum and is still
-          # exercised by the `unit` job on Linux, where LC_UUID is irrelevant.
+          # exercised by the `vet` job on Linux, where LC_UUID is irrelevant.
           go-version: 'stable'
           cache: true
 
@@ -73,14 +73,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: go test ./internal/proto/ -run=Fuzz -fuzz=FuzzReadUnconnectedPing -fuzztime=30s
 
-  # T1: black-box end-to-end against a real phantom subprocess.
+  # End-to-end tests against a real phantom subprocess.
   #
   # Sharded for ISOLATION as much as for speed: phantom binds UDP :19132
   # unconditionally with SO_REUSEPORT, so two concurrent instances on one host
   # silently load-balance each other's datagrams. One shard per runner gives
   # each its own network stack; cases run serially within a shard.
-  t1:
-    name: T1 e2e (shard ${{ matrix.shard }})
+  e2e:
+    name: e2e (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

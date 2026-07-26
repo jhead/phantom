@@ -27,7 +27,7 @@ const supportedVersions = Object.keys(supported)
 
 const missingFromCorpus = supportedVersions.filter(v => !capturedVersions.has(v))
 
-// The T1 matrix is deliberately a SAMPLE, so a version missing from it is only
+// The e2e matrix is deliberately a SAMPLE, so a version missing from it is only
 // notable when it is newer than everything we currently sample.
 const newestSampled = Math.max(...[...matrixVersions].map(v => supported[v] || 0))
 const newerThanMatrix = supportedVersions.filter(
@@ -38,7 +38,7 @@ let drift = false
 
 if (missingFromCorpus.length) {
   drift = true
-  console.error('T0 corpus is missing versions bedrock-protocol now supports:')
+  console.error('unit-test corpus is missing versions bedrock-protocol now supports:')
   for (const v of missingFromCorpus) {
     console.error(`  ${v} (protocol ${supported[v]})`)
   }
@@ -47,7 +47,7 @@ if (missingFromCorpus.length) {
 
 if (newerThanMatrix.length) {
   drift = true
-  console.error('T1 matrix does not sample any version this new:')
+  console.error('e2e matrix does not sample any version this new:')
   for (const v of newerThanMatrix) {
     console.error(`  ${v} (protocol ${supported[v]})`)
   }
@@ -56,7 +56,7 @@ if (newerThanMatrix.length) {
 
 if (!drift) {
   console.log(`In sync: ${supportedVersions.length} versions supported, ` +
-    `${capturedVersions.size} in the T0 corpus, ${matrixVersions.size} sampled by T1.`)
+    `${capturedVersions.size} in the unit-test corpus, ${matrixVersions.size} sampled by e2e.`)
   process.exit(0)
 }
 

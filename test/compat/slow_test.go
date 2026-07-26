@@ -2,7 +2,7 @@
 
 package compat
 
-// T1 - slow black-box cases.
+// Slow end-to-end cases.
 //
 // These are behind an extra `slow` tag because they wait on phantom's real
 // timers: the idle sweep runs every 5s and cannot be shortened from outside the

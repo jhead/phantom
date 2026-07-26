@@ -1,7 +1,7 @@
 // Package corpus loads the cross-version compatibility test fixtures.
 //
 // It contains NO phantom protocol logic - only fixture data and the XFAIL
-// registry - which is why both test tiers may import it without the black-box
+// registry - which is why both test suites may import it without the black-box
 // tier learning anything about phantom's implementation. See test/compat/DESIGN.md.
 package corpus
 

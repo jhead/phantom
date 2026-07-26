@@ -2,7 +2,7 @@
 
 package compat
 
-// T1 - real client stack, driven through phantom.
+// End-to-end tests driving a real client stack through phantom.
 //
 // The fake upstream in fakeserver/ gives byte-exact control but is, by
 // construction, only as correct as our own understanding of RakNet. These tests
@@ -13,7 +13,7 @@ package compat
 //
 // Run with: go test -tags='e2e node' ./test/compat/...
 //
-// The `node` tag is separate from `e2e` so the rest of T1 runs on machines with
+// The `node` tag is separate from `e2e` so the rest of the suite runs on machines with
 // no Node toolchain.
 
 import (
@@ -35,7 +35,7 @@ type Matrix struct {
 	Versions []MatrixVersion `json:"versions"`
 }
 
-// MatrixVersion is one Minecraft version the live tier exercises.
+// MatrixVersion is one Minecraft version the e2e suite exercises.
 type MatrixVersion struct {
 	MC       string `json:"mc"`
 	Protocol int    `json:"protocol"`
@@ -44,7 +44,7 @@ type MatrixVersion struct {
 	Note     string `json:"note"`
 }
 
-// LoadMatrix reads the committed T1 version matrix, honouring PHANTOM_SHARD so
+// LoadMatrix reads the committed e2e version matrix, honouring PHANTOM_SHARD so
 // CI can split it across runners.
 func LoadMatrix(t *testing.T) Matrix {
 	t.Helper()
