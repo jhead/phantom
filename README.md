@@ -24,6 +24,24 @@ $ chmod u+x ./phantom-<os>
 
 Just replace `<os>` with macos, linux, etc. for the correct OS you're using.
 
+**iSH on iOS**
+
+iSH provides a 32-bit x86 Linux userspace (`uname -m` is typically `i686` or
+`x86_64` under emulation of 32-bit userspace — use the x86 build). Download or
+build `phantom-linux-x86`, not the ARM or amd64 Linux binaries:
+
+```bash
+chmod u+x ./phantom-linux-x86
+./phantom-linux-x86 -server example.com:19132
+```
+
+Build it yourself with:
+
+```bash
+make bin/phantom-linux-x86
+# or: CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -o bin/phantom-linux-x86 ./cmd
+```
+
 ## Usage
 
 Open up a command prompt (Windows) or terminal (macOS & Linux) to the location
@@ -138,6 +156,7 @@ computer, a VM, or even with a Minecraft hosting service.
 ## Supported platforms
 
 - This tool should work on Windows, macOS, and Linux.
+- A `phantom-linux-x86` (386) build is available for iSH on iOS.
 - ARM builds are available for Raspberry Pi and similar SOCs.
 - Minecraft for Windows 10, iOS/Android, Xbox One, and PS4 are currently supported.
 - **Nintendo Switch is not supported.**
@@ -147,6 +166,17 @@ On macOS, you'll be prompted automatically. On Windows, you may need to go into
 your Windows Firewall settings and open up all UDP ports for phantom.
 
 ## Troubleshooting
+
+**`syntax error` / `unexpected ")"` when starting phantom in iSH**
+
+You downloaded the wrong architecture. iSH needs `phantom-linux-x86` (linux/386).
+ARM and amd64 Linux binaries look like garbage to the shell and produce syntax
+errors. See Installing → iSH on iOS.
+
+**`listen udp4 :19132: invalid argument` on iSH**
+
+Older builds required SO_REUSEPORT, which iSH rejects. Current builds fall back
+to a normal UDP listen when reuseport is unsupported.
 
 **My server isn't showing up on the list but it's online and phantom is showing connections!**
 
