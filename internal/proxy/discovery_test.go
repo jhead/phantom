@@ -11,22 +11,17 @@ import (
 )
 
 func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
-	remote, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer remote.Close()
-
 	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
 
+	// Closed port: discovery probe fails quickly and offline pong is advertised.
 	p, err := New(ProxyPrefs{
 		BindAddress:              "127.0.0.1",
 		BindPort:                 0,
-		RemoteServer:             remote.LocalAddr().String(),
+		RemoteServer:             "127.0.0.1:1",
 		IdleTimeout:              time.Minute,
 		NumWorkers:               1,
 		DisableDiscoveryListener: true,
@@ -39,9 +34,11 @@ func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
 	}
 	defer p.Close()
 
-	p.serverOffline = true
+	prev := discoveryPingTimeout
+	discoveryPingTimeout = 200 * time.Millisecond
+	defer func() { discoveryPingTimeout = prev }()
 
-	ping := []byte{proto.UnconnectedPingID, 0, 0, 0, 0, 0, 0, 0, 0}
+	ping := []byte{proto.UnconnectedPingID, 1, 2, 3, 4, 5, 6, 7, 8}
 	if err := p.HandleUnconnectedPing(ping, client.LocalAddr()); err != nil {
 		t.Fatalf("HandleUnconnectedPing: %v", err)
 	}
@@ -62,15 +59,8 @@ func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
 	if uint16(fromUDP.Port) != p.boundPort {
 		t.Fatalf("pong from port %d, want boundPort %d", fromUDP.Port, p.boundPort)
 	}
-
-	// Ping is still forwarded to the remote even when offline.
-	_ = remote.SetReadDeadline(time.Now().Add(time.Second))
-	rn, _, err := remote.ReadFrom(buf)
-	if err != nil {
-		t.Fatalf("remote did not receive forwarded ping: %v", err)
-	}
-	if rn < 1 || buf[0] != proto.UnconnectedPingID {
-		t.Fatalf("remote expected ping, got n=%d id=%v", rn, buf[:rn])
+	if !p.serverOffline {
+		t.Fatal("expected serverOffline after failed discovery probe")
 	}
 }
 

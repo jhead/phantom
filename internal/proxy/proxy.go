@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -222,16 +223,21 @@ func (proxy *ProxyServer) Close() {
 	// "use of closed network connection" while dead is still unset.
 	proxy.dead.Set()
 
-	// Stop UDP listeners
-	proxy.server.Close()
-	proxy.pingServer.Close()
-
+	// Stop UDP listeners (ping listeners may be nil when a DiscoveryHub owns them)
+	if proxy.server != nil {
+		_ = proxy.server.Close()
+	}
+	if proxy.pingServer != nil {
+		_ = proxy.pingServer.Close()
+	}
 	if proxy.pingServerV6 != nil {
-		proxy.pingServerV6.Close()
+		_ = proxy.pingServerV6.Close()
 	}
 
 	// Close all connections
-	proxy.clientMap.Close()
+	if proxy.clientMap != nil {
+		proxy.clientMap.Close()
+	}
 }
 
 
@@ -243,6 +249,15 @@ func (proxy *ProxyServer) RemoteServer() string {
 // HandleUnconnectedPing processes a discovery ping fanned out from a
 // DiscoveryHub. Uses the dedicated discovery probe path (#117).
 func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) error {
+	if proxy.dead.IsSet() || proxy.server == nil {
+		return fmt.Errorf("proxy not running")
+	}
+	if from == nil {
+		return fmt.Errorf("nil client address")
+	}
+	if len(data) < 1 || data[0] != proto.UnconnectedPingID {
+		return fmt.Errorf("not an unconnected ping")
+	}
 	return proxy.handleDiscoveryPing(from, data)
 }
 
@@ -544,8 +559,12 @@ func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
 
 	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
-		// Overwrite the server ID with one unique to this phantom instance.
-		// If we don't do this, the client will get confused if you restart phantom.
+		// Overwrite the server ID with one unique to this proxy.
+		// If we don't do this, the client will get confused if you restart phantom,
+		// and multiple -server backends in one process would look identical.
+		id := make([]byte, 8)
+		binary.BigEndian.PutUint64(id, uint64(proxy.serverID))
+		packet.ID = id
 		packet.Pong.ServerID = fmt.Sprintf("%d", proxy.serverID)
 
 		// Always advertise phantom's bind port. Upstream MOTDs (notably Geyser)
