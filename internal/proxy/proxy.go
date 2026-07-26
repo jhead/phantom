@@ -20,6 +20,11 @@ import (
 
 const maxMTU = 1472
 
+// offlineTimeoutThreshold is how many consecutive upstream read timeouts are
+// required before advertising OfflinePong on LAN discovery. A single flaky
+// timeout must not flip the whole proxy "offline" (#104).
+const offlineTimeoutThreshold = 3
+
 var idleCheckInterval = 5 * time.Second
 
 type ProxyServer struct {
@@ -33,6 +38,7 @@ type ProxyServer struct {
 	prefs               ProxyPrefs
 	dead                *abool.AtomicBool
 	serverOffline       bool
+	offlineTimeouts     int
 }
 
 type ProxyPrefs struct {
@@ -47,7 +53,6 @@ type ProxyPrefs struct {
 
 var randSource = rand.NewSource(time.Now().UnixNano())
 var serverID = randSource.Int63()
-var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
 // isOfflineError reports whether err indicates the remote Bedrock server is
 // unreachable. Connected UDP sockets surface ICMP port-unreachable as
@@ -99,6 +104,7 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		prefs,
 		abool.New(),
 		false,
+		0,
 	}, nil
 }
 
@@ -297,6 +303,48 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	return err
 }
 
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(err.Error(), "timeout")
+}
+
+func isConnRefusedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
+}
+
+// noteUpstreamReadError updates offline state from a failed server read.
+// Connection refused marks offline immediately. Timeouts only do so after
+// offlineTimeoutThreshold consecutive failures so one flaky UDP deadline
+// does not broadcast OfflinePong to every LAN client (#104).
+func (proxy *ProxyServer) noteUpstreamReadError(err error) {
+	log.Warn().Msgf("%v", err)
+
+	if isConnRefusedError(err) {
+		proxy.offlineTimeouts = 0
+		proxy.markServerOffline()
+		return
+	}
+	if isTimeoutError(err) {
+		proxy.offlineTimeouts++
+		if proxy.offlineTimeouts >= offlineTimeoutThreshold {
+			proxy.markServerOffline()
+		}
+		return
+	}
+}
+
 func (proxy *ProxyServer) markServerOffline() {
 	if proxy.serverOffline {
 		return
@@ -304,6 +352,14 @@ func (proxy *ProxyServer) markServerOffline() {
 	log.Warn().Msgf("Server seems to be offline :(")
 	log.Warn().Msgf("We'll keep trying to connect...")
 	proxy.serverOffline = true
+}
+
+func (proxy *ProxyServer) noteUpstreamReachable() {
+	proxy.offlineTimeouts = 0
+	if proxy.serverOffline {
+		log.Info().Msgf("Server is back online!")
+		proxy.serverOffline = false
+	}
 }
 
 // Proxies packets sent by the server to us for a specific Minecraft client back to
@@ -325,12 +381,7 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 				break
 			}
 
-			if isOfflineError(err) {
-				proxy.markServerOffline()
-			} else {
-				log.Warn().Msgf("%v", err)
-			}
-
+			proxy.noteUpstreamReadError(err)
 			break
 		}
 
@@ -339,10 +390,7 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 			continue
 		}
 
-		if proxy.serverOffline {
-			log.Info().Msgf("Server is back online!")
-			proxy.serverOffline = false
-		}
+		proxy.noteUpstreamReachable()
 
 		// Resize data to byte count from 'read'
 		data := buffer[:read]
