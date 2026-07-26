@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"net"
@@ -30,6 +31,7 @@ type ProxyServer struct {
 	prefs               ProxyPrefs
 	dead                *abool.AtomicBool
 	serverOffline       bool
+	serverID            int64
 }
 
 type ProxyPrefs struct {
@@ -40,10 +42,12 @@ type ProxyPrefs struct {
 	EnableIPv6   bool
 	RemovePorts  bool
 	NumWorkers   uint
+	// DisableDiscoveryListener skips binding :19132/:19133. Used when a
+	// DiscoveryHub owns discovery and fans pings into HandleUnconnectedPing.
+	DisableDiscoveryListener bool
 }
 
 var randSource = rand.NewSource(time.Now().UnixNano())
-var serverID = randSource.Int63()
 var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
@@ -78,34 +82,56 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		prefs,
 		abool.New(),
 		false,
+		randSource.Int63(),
 	}, nil
 }
 
 func (proxy *ProxyServer) Start() error {
-	// Bind to 19132 on all addresses to receive broadcasted pings
-	// Sets SO_REUSEADDR et al to support multiple instances of phantom
-	log.Info().Msgf("Binding ping server to port 19132")
-	if pingServer, err := reuse.ListenPacket("udp4", ":19132"); err == nil {
-		proxy.pingServer = pingServer
-
-		// Start proxying ping packets from the broadcast listener
-		go proxy.readLoop(proxy.pingServer)
-	} else {
-		// Bind failed
+	if err := proxy.listen(); err != nil {
 		return err
 	}
 
-	// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
-	if proxy.prefs.EnableIPv6 {
-		log.Info().Msgf("Binding IPv6 ping server to port 19133")
-		if pingServerV6, err := reuse.ListenPacket("udp6", ":19133"); err == nil {
-			proxy.pingServerV6 = pingServerV6
+	// Start processing everything else using the proxy listener
+	proxy.startWorkers(proxy.server)
 
-			// Start proxying ping packets from the broadcast listener
-			go proxy.readLoop(proxy.pingServerV6)
-		} else {
-			// IPv6 Bind failed
-			log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
+	return nil
+}
+
+// StartAsync is like Start but runs all workers in goroutines and returns once
+// listening. Used when one process hosts multiple proxies behind a DiscoveryHub.
+func (proxy *ProxyServer) StartAsync() error {
+	if err := proxy.listen(); err != nil {
+		return err
+	}
+
+	log.Info().Msgf("Starting %d workers", proxy.prefs.NumWorkers)
+	for i := uint(0); i < proxy.prefs.NumWorkers; i++ {
+		go proxy.readLoop(proxy.server)
+	}
+	return nil
+}
+
+func (proxy *ProxyServer) listen() error {
+	if !proxy.prefs.DisableDiscoveryListener {
+		// Exclusive bind: SO_REUSEPORT/ADDR cannot correctly share discovery
+		// across processes (see DiscoveryHub / #175).
+		log.Info().Msgf("Binding ping server to port 19132")
+		pingServer, err := net.ListenPacket("udp4", ":19132")
+		if err != nil {
+			return fmt.Errorf("bind :19132: %w (only one phantom can own LAN discovery; pass multiple -server flags to one process instead of running multiple instances)", err)
+		}
+		proxy.pingServer = pingServer
+		go proxy.readLoop(proxy.pingServer)
+
+		// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
+		if proxy.prefs.EnableIPv6 {
+			log.Info().Msgf("Binding IPv6 ping server to port 19133")
+			if pingServerV6, err := net.ListenPacket("udp6", ":19133"); err == nil {
+				proxy.pingServerV6 = pingServerV6
+				go proxy.readLoop(proxy.pingServerV6)
+			} else {
+				log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
+			}
 		}
 	}
 
@@ -125,19 +151,24 @@ func (proxy *ProxyServer) Start() error {
 
 	log.Info().Msgf("Proxy server listening!")
 	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
-
-	// Start processing everything else using the proxy listener
-	proxy.startWorkers(proxy.server)
-
 	return nil
+}
+
+// RemoteServer returns the upstream address this proxy forwards to.
+func (proxy *ProxyServer) RemoteServer() string {
+	return proxy.prefs.RemoteServer
 }
 
 func (proxy *ProxyServer) Close() {
 	log.Info().Msgf("Stopping proxy server")
 
 	// Stop UDP listeners
-	proxy.server.Close()
-	proxy.pingServer.Close()
+	if proxy.server != nil {
+		proxy.server.Close()
+	}
+	if proxy.pingServer != nil {
+		proxy.pingServer.Close()
+	}
 
 	if proxy.pingServerV6 != nil {
 		proxy.pingServerV6.Close()
@@ -179,6 +210,21 @@ func (proxy *ProxyServer) readLoop(listener net.PacketConn) {
 	log.Info().Msgf("Listener shut down: %s", listener.LocalAddr())
 }
 
+// HandleUnconnectedPing processes a discovery ping fanned out from a
+// DiscoveryHub-owned :19132 listener. Replies are sent from this proxy's data port.
+func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) error {
+	if proxy.dead.IsSet() || proxy.server == nil {
+		return fmt.Errorf("proxy not running")
+	}
+	if from == nil {
+		return fmt.Errorf("nil client address")
+	}
+	if len(data) < 1 || data[0] != proto.UnconnectedPingID {
+		return fmt.Errorf("not an unconnected ping")
+	}
+	return proxy.handleClientPacket(from, data)
+}
+
 // Inspects an incoming UDP packet, looking up the client in our connection
 // map, lazily creating a new connection to the remote server when necessary,
 // then forwarding the data to that remote connection.
@@ -192,12 +238,17 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 		return nil
 	}
 
-	data := packetBuffer[:read]
+	return proxy.handleClientPacket(client, packetBuffer[:read])
+}
+
+// handleClientPacket is the shared discovery/data-plane path used by both the
+// local UDP read loops and DiscoveryHub fan-out via HandleUnconnectedPing.
+func (proxy *ProxyServer) handleClientPacket(client net.Addr, data []byte) error {
 	log.Trace().Msgf("client recv: %v", data)
 
 	// Handler triggered when a new client connects and we create a new connetion to the remote server
 	onNewConnection := func(newServerConn *net.UDPConn) {
-		log.Info().Msgf("New connection from client %s -> %s", client.String(), listener.LocalAddr())
+		log.Info().Msgf("New connection from client %s -> %s", client.String(), proxy.bindAddress)
 		proxy.processDataFromServer(newServerConn, client)
 	}
 
@@ -214,14 +265,16 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	// Wait 5 seconds for the server to respond to whatever we sent, or else timeout
 	_ = serverConn.SetReadDeadline(time.Now().Add(time.Second * 5))
 
-	if packetID := data[0]; packetID == proto.UnconnectedPingID {
+	if len(data) > 0 && data[0] == proto.UnconnectedPingID {
 		log.Info().Msgf("Received LAN ping from client: %s", client.String())
 
 		if proxy.serverOffline {
 			replyBuffer := proto.OfflinePong
 			replyBytes := proxy.rewriteUnconnectedPong(replyBuffer.Bytes())
 
-			proxy.server.WriteTo(replyBytes, client)
+			if proxy.server != nil {
+				_, _ = proxy.server.WriteTo(replyBytes, client)
+			}
 			log.Info().Msgf("Sent server offline pong to client: %v", client.String())
 		}
 
@@ -290,9 +343,13 @@ func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 	log.Debug().Msgf("Received Unconnected Pong from server: %v", data)
 
 	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
-		// Overwrite the server ID with one unique to this phantom instance.
-		// If we don't do this, the client will get confused if you restart phantom.
-		packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
+		// Overwrite the server ID with one unique to this proxy.
+		// If we don't do this, the client will get confused if you restart phantom,
+		// and multiple -server backends in one process would look identical.
+		id := make([]byte, 8)
+		binary.BigEndian.PutUint64(id, uint64(proxy.serverID))
+		packet.ID = id
+		packet.Pong.ServerID = fmt.Sprintf("%d", proxy.serverID)
 
 		// Overwrite port numbers sent back from server (if any)
 		if packet.Pong.Port4 != "" && !proxy.prefs.RemovePorts {
