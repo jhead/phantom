@@ -49,6 +49,24 @@ var randSource = rand.NewSource(time.Now().UnixNano())
 var serverID = randSource.Int63()
 var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
+// isOfflineError reports whether err indicates the remote Bedrock server is
+// unreachable. Connected UDP sockets surface ICMP port-unreachable as
+// ECONNREFUSED on a later Read/Write — normal UDP behavior, not a proxy bug.
+func isOfflineError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	// Fallback for platforms / wrappers that only expose the message text.
+	return offlineErrorRegex.MatchString(err.Error())
+}
+
 func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	bindPort := prefs.BindPort
 
@@ -262,7 +280,30 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 
 	// Write packet from client to server
 	_, err = serverConn.Write(data)
+	if err == nil {
+		return nil
+	}
+
+	// Write often consumes the pending ICMP error before processDataFromServer's
+	// ReadFrom sees it. Meanwhile LAN pings keep refreshing SetReadDeadline and
+	// ClientMap lastActive, so the session never times out and never marks the
+	// server offline — producing a spam of "connection refused" warnings (#79).
+	if isOfflineError(err) {
+		proxy.markServerOffline()
+		proxy.clientMap.Delete(client)
+		return nil
+	}
+
 	return err
+}
+
+func (proxy *ProxyServer) markServerOffline() {
+	if proxy.serverOffline {
+		return
+	}
+	log.Warn().Msgf("Server seems to be offline :(")
+	log.Warn().Msgf("We'll keep trying to connect...")
+	proxy.serverOffline = true
 }
 
 // Proxies packets sent by the server to us for a specific Minecraft client back to
@@ -279,14 +320,15 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 
 		// Read error
 		if err != nil {
-			log.Warn().Msgf("%v", err)
+			// Conn closed by idle cleanup / offline write-path Delete — expected.
+			if errors.Is(err, net.ErrClosed) {
+				break
+			}
 
-			offlineError := offlineErrorRegex.MatchString(err.Error())
-
-			if offlineError && !proxy.serverOffline {
-				log.Warn().Msgf("Server seems to be offline :(")
-				log.Warn().Msgf("We'll keep trying to connect...")
-				proxy.serverOffline = true
+			if isOfflineError(err) {
+				proxy.markServerOffline()
+			} else {
+				log.Warn().Msgf("%v", err)
 			}
 
 			break
