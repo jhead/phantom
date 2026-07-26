@@ -273,6 +273,14 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	data := packetBuffer[:read]
 	log.Trace().Msgf("client recv: %v", data)
 
+	// Drop echoes of our own DialUDP traffic. When -server points at this same
+	// host's :19132 (typical LAN setup), SO_REUSEADDR can deliver our outbound
+	// packets back to the ping listener. Proxying those again would open a new
+	// UDP socket per echo until dial fails with "too many open files".
+	if proxy.clientMap.IsOwnAddress(client) {
+		return nil
+	}
+
 	// LAN discovery must not share the per-client DialUDP session used for
 	// gameplay. After a console disconnects, that socket is often a stale
 	// RakNet association: the remote ignores further Unconnected Pings, while
