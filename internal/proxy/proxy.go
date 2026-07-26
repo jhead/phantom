@@ -18,6 +18,7 @@ import (
 const maxMTU = 1472
 
 var idleCheckInterval = 5 * time.Second
+var discoveryPingTimeout = 5 * time.Second
 
 type ProxyServer struct {
 	bindAddress         *net.UDPAddr
@@ -195,6 +196,16 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	data := packetBuffer[:read]
 	log.Trace().Msgf("client recv: %v", data)
 
+	// LAN discovery must not share the per-client DialUDP session used for
+	// gameplay. After a console disconnects, that socket is often a stale
+	// RakNet association: the remote ignores further Unconnected Pings, while
+	// console re-pings keep refreshing SetReadDeadline + idle lastActive, so
+	// the session never expires and the server vanishes from LAN until restart
+	// (GitHub #117).
+	if data[0] == proto.UnconnectedPingID {
+		return proxy.handleDiscoveryPing(client, data)
+	}
+
 	// Handler triggered when a new client connects and we create a new connetion to the remote server
 	onNewConnection := func(newServerConn *net.UDPConn) {
 		log.Info().Msgf("New connection from client %s -> %s", client.String(), listener.LocalAddr())
@@ -214,23 +225,88 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	// Wait 5 seconds for the server to respond to whatever we sent, or else timeout
 	_ = serverConn.SetReadDeadline(time.Now().Add(time.Second * 5))
 
-	if packetID := data[0]; packetID == proto.UnconnectedPingID {
-		log.Info().Msgf("Received LAN ping from client: %s", client.String())
-
-		if proxy.serverOffline {
-			replyBuffer := proto.OfflinePong
-			replyBytes := proxy.rewriteUnconnectedPong(replyBuffer.Bytes())
-
-			proxy.server.WriteTo(replyBytes, client)
-			log.Info().Msgf("Sent server offline pong to client: %v", client.String())
-		}
-
-		// Pass ping through to server even if it's offline
-	}
-
 	// Write packet from client to server
 	_, err = serverConn.Write(data)
 	return err
+}
+
+// handleDiscoveryPing answers a console/LAN Unconnected Ping using a fresh
+// probe to the remote server, independent of any gameplay session.
+func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) error {
+	log.Info().Msgf("Received LAN ping from client: %s", client.String())
+
+	pong, err := proxy.probeRemoteUnconnectedPong(ping)
+	if err != nil {
+		proxy.markServerOffline()
+		if _, werr := proxy.server.WriteTo(proxy.buildOfflinePong(ping), client); werr != nil {
+			return werr
+		}
+		log.Info().Msgf("Sent server offline pong to client: %v", client.String())
+		return nil
+	}
+
+	if proxy.serverOffline {
+		log.Info().Msgf("Server is back online!")
+		proxy.serverOffline = false
+	}
+
+	pong = proxy.rewriteUnconnectedPong(pong)
+	if _, err := proxy.server.WriteTo(pong, client); err != nil {
+		return err
+	}
+	log.Info().Msgf("Sent LAN pong to client: %v", client.String())
+	return nil
+}
+
+// probeRemoteUnconnectedPong dials a one-shot UDP socket to the remote and
+// waits for an Unconnected Pong. A fresh local port avoids stale RakNet state.
+func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error) {
+	conn, err := net.DialUDP("udp", nil, proxy.remoteServerAddress)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(discoveryPingTimeout))
+	if _, err := conn.Write(ping); err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, maxMTU)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return nil, err
+		}
+		if n < 1 {
+			continue
+		}
+		if buf[0] != proto.UnconnectedPongID {
+			continue
+		}
+		out := make([]byte, n)
+		copy(out, buf[:n])
+		return out, nil
+	}
+}
+
+func (proxy *ProxyServer) markServerOffline() {
+	if proxy.serverOffline {
+		return
+	}
+	log.Warn().Msgf("Server seems to be offline :(")
+	log.Warn().Msgf("We'll keep trying to connect...")
+	proxy.serverOffline = true
+}
+
+// buildOfflinePong returns the canned offline advertisement, echoing the
+// client's ping time so consoles can match the response to their request.
+func (proxy *ProxyServer) buildOfflinePong(ping []byte) []byte {
+	reply := append([]byte(nil), proto.OfflinePong.Bytes()...)
+	if len(ping) >= 9 && len(reply) >= 9 {
+		copy(reply[1:9], ping[1:9])
+	}
+	return proxy.rewriteUnconnectedPong(reply)
 }
 
 // Proxies packets sent by the server to us for a specific Minecraft client back to
@@ -247,16 +323,12 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 
 		// Read error
 		if err != nil {
-			log.Warn().Msgf("%v", err)
-
-			offlineError := offlineErrorRegex.MatchString(err.Error())
-
-			if offlineError && !proxy.serverOffline {
-				log.Warn().Msgf("Server seems to be offline :(")
-				log.Warn().Msgf("We'll keep trying to connect...")
-				proxy.serverOffline = true
+			// Game-session read errors (including the 5s deadline after a
+			// console disconnect) are not a reliable "server offline" signal.
+			// LAN discovery uses a dedicated probe (#117).
+			if !offlineErrorRegex.MatchString(err.Error()) {
+				log.Warn().Msgf("%v", err)
 			}
-
 			break
 		}
 
@@ -265,20 +337,9 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 			continue
 		}
 
-		if proxy.serverOffline {
-			log.Info().Msgf("Server is back online!")
-			proxy.serverOffline = false
-		}
-
 		// Resize data to byte count from 'read'
 		data := buffer[:read]
 		log.Trace().Msgf("server recv: %v", data)
-
-		// Rewrite Unconnected Pong packets
-		if packetID := data[0]; packetID == proto.UnconnectedPongID {
-			data = proxy.rewriteUnconnectedPong(data)
-			log.Info().Msgf("Sent LAN pong to client: %v", client.String())
-		}
 
 		proxy.server.WriteTo(data, client)
 	}
