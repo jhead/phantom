@@ -31,6 +31,7 @@ bin/phantom-linux:
 	GOOS=linux GOARCH=amd64 go build -o ../bin/phantom-linux ${CMDSRC} && \
 	popd
 
+# Termux on Android uses these linux/arm* targets (not GOOS=android).
 bin/phantom-linux-arm5:
 	pushd cmd && \
 	GOOS=linux GOARCH=arm GOARM=5 go build -o ../bin/phantom-linux-arm5 ${CMDSRC} && \
