@@ -59,7 +59,7 @@ type ProxyPrefs struct {
 	IdleTimeout  time.Duration
 	EnableIPv6   bool
 	RemovePorts  bool
-	NumWorkers               uint
+	NumWorkers   uint
 	// DisableDiscoveryListener skips binding :19132/:19133. Used when a
 	// DiscoveryHub owns discovery and fans pings into HandleUnconnectedPing.
 	DisableDiscoveryListener bool
@@ -239,7 +239,6 @@ func (proxy *ProxyServer) Close() {
 		proxy.clientMap.Close()
 	}
 }
-
 
 // RemoteServer returns the upstream address this proxy forwards to.
 func (proxy *ProxyServer) RemoteServer() string {

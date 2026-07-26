@@ -37,7 +37,6 @@ func TestIsOfflineError(t *testing.T) {
 	}
 }
 
-
 // Keep the idle deadline behavior documented: a timeout longer than the
 // per-write read deadline should still classify as offline.
 func TestIsOfflineErrorDeadline(t *testing.T) {
