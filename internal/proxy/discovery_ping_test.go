@@ -82,7 +82,7 @@ func TestDiscoveryPingDoesNotReuseStaleSession(t *testing.T) {
 
 	dataConn, err := net.ListenUDP("udp", proxyServer.bindAddress)
 	require.NoError(t, err)
-	proxyServer.server = dataConn
+	proxyServer.server.Store(dataConn)
 	t.Cleanup(func() {
 		proxyServer.dead.Set()
 		_ = dataConn.Close()

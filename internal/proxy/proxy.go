@@ -8,6 +8,8 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,10 +53,11 @@ type ProxyServer struct {
 	remoteServerAddress *net.UDPAddr
 	pingServer          net.PacketConn
 	pingServerV6        net.PacketConn
-	server              *net.UDPConn
+	server              atomic.Pointer[net.UDPConn]
 	clientMap           *clientmap.ClientMap
 	prefs               ProxyPrefs
 	dead                *abool.AtomicBool
+	offlineMu           sync.Mutex
 	serverOffline       bool
 	offlineTimeouts     int
 	serverID            int64
@@ -116,18 +119,13 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 	}
 
 	return &ProxyServer{
-		bindAddress,
-		bindPort,
-		remoteServerAddress,
-		nil,
-		nil,
-		nil,
-		clientmap.New(prefs.IdleTimeout, idleCheckInterval),
-		prefs,
-		abool.New(),
-		false,
-		0,
-		randSource.Int63(),
+		bindAddress:         bindAddress,
+		boundPort:           bindPort,
+		remoteServerAddress: remoteServerAddress,
+		clientMap:           clientmap.New(prefs.IdleTimeout, idleCheckInterval),
+		prefs:               prefs,
+		dead:                abool.New(),
+		serverID:            randSource.Int63(),
 	}, nil
 }
 
@@ -137,7 +135,7 @@ func (proxy *ProxyServer) Start() error {
 	}
 
 	// Start processing everything else using the proxy listener
-	proxy.startWorkers(proxy.server)
+	proxy.startWorkers(proxy.dataConn())
 
 	return nil
 }
@@ -151,7 +149,7 @@ func (proxy *ProxyServer) StartAsync() error {
 
 	log.Info().Msgf("Starting %d workers", proxy.prefs.NumWorkers)
 	for i := uint(0); i < proxy.prefs.NumWorkers; i++ {
-		go proxy.readLoop(proxy.server)
+		go proxy.readLoop(proxy.dataConn())
 	}
 	return nil
 }
@@ -185,9 +183,13 @@ func (proxy *ProxyServer) listen() error {
 	if err != nil {
 		return err
 	}
-	proxy.server = proxyServer
+	proxy.server.Store(proxyServer)
 
 	return nil
+}
+
+func (proxy *ProxyServer) dataConn() *net.UDPConn {
+	return proxy.server.Load()
 }
 
 // listenPacket prefers SO_REUSEPORT via libp2p/reuseport, but some platforms
@@ -232,8 +234,8 @@ func (proxy *ProxyServer) Close() {
 	proxy.dead.Set()
 
 	// Stop UDP listeners (ping listeners may be nil when a DiscoveryHub owns them)
-	if proxy.server != nil {
-		_ = proxy.server.Close()
+	if server := proxy.dataConn(); server != nil {
+		_ = server.Close()
 	}
 	if proxy.pingServer != nil {
 		_ = proxy.pingServer.Close()
@@ -256,7 +258,7 @@ func (proxy *ProxyServer) RemoteServer() string {
 // HandleUnconnectedPing processes a discovery ping fanned out from a
 // DiscoveryHub. Uses the dedicated discovery probe path (#117).
 func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) error {
-	if proxy.dead.IsSet() || proxy.server == nil {
+	if proxy.dead.IsSet() || proxy.dataConn() == nil {
 		return fmt.Errorf("proxy not running")
 	}
 	if from == nil {
@@ -409,15 +411,19 @@ func (proxy *ProxyServer) noteUpstreamReadError(err error) {
 	log.Warn().Msgf("%v", err)
 
 	if isConnRefusedError(err) {
+		proxy.offlineMu.Lock()
 		proxy.offlineTimeouts = 0
-		proxy.markServerOffline()
+		proxy.markServerOfflineLocked()
+		proxy.offlineMu.Unlock()
 		return
 	}
 	if isTimeoutError(err) {
+		proxy.offlineMu.Lock()
 		proxy.offlineTimeouts++
 		if proxy.offlineTimeouts >= offlineTimeoutThreshold {
-			proxy.markServerOffline()
+			proxy.markServerOfflineLocked()
 		}
+		proxy.offlineMu.Unlock()
 		return
 	}
 }
@@ -427,10 +433,15 @@ func (proxy *ProxyServer) noteUpstreamReadError(err error) {
 func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) error {
 	log.Info().Msgf("Received LAN ping from client: %s", client.String())
 
+	server := proxy.dataConn()
+	if server == nil {
+		return fmt.Errorf("proxy not running")
+	}
+
 	pong, err := proxy.probeRemoteUnconnectedPong(ping)
 	if err != nil {
 		proxy.markServerOffline()
-		if _, werr := proxy.server.WriteTo(proxy.buildOfflinePong(ping), client); werr != nil {
+		if _, werr := server.WriteTo(proxy.buildOfflinePong(ping), client); werr != nil {
 			return werr
 		}
 		log.Info().Msgf("Sent server offline pong to client: %v", client.String())
@@ -440,7 +451,7 @@ func (proxy *ProxyServer) handleDiscoveryPing(client net.Addr, ping []byte) erro
 	proxy.noteUpstreamReachable()
 
 	pong = proxy.rewriteUnconnectedPong(pong)
-	if _, err := proxy.server.WriteTo(pong, client); err != nil {
+	if _, err := server.WriteTo(pong, client); err != nil {
 		return err
 	}
 	log.Info().Msgf("Sent LAN pong to client: %v", client.String())
@@ -457,7 +468,7 @@ func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error
 	defer conn.Close()
 
 	timeout := discoveryPingTimeout
-	if proxy.serverOffline {
+	if proxy.isServerOffline() {
 		timeout = discoveryRecoveryProbeTimeout
 	}
 	_ = conn.SetDeadline(time.Now().Add(timeout))
@@ -487,6 +498,12 @@ func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error
 }
 
 func (proxy *ProxyServer) markServerOffline() {
+	proxy.offlineMu.Lock()
+	defer proxy.offlineMu.Unlock()
+	proxy.markServerOfflineLocked()
+}
+
+func (proxy *ProxyServer) markServerOfflineLocked() {
 	if proxy.serverOffline {
 		return
 	}
@@ -496,11 +513,19 @@ func (proxy *ProxyServer) markServerOffline() {
 }
 
 func (proxy *ProxyServer) noteUpstreamReachable() {
+	proxy.offlineMu.Lock()
+	defer proxy.offlineMu.Unlock()
 	proxy.offlineTimeouts = 0
 	if proxy.serverOffline {
 		log.Info().Msgf("Server is back online!")
 		proxy.serverOffline = false
 	}
+}
+
+func (proxy *ProxyServer) isServerOffline() bool {
+	proxy.offlineMu.Lock()
+	defer proxy.offlineMu.Unlock()
+	return proxy.serverOffline
 }
 
 // buildOfflinePong returns the canned offline advertisement, echoing the
@@ -560,7 +585,9 @@ func (proxy *ProxyServer) processDataFromServer(remoteConn *net.UDPConn, client 
 		data := buffer[:read]
 		log.Trace().Msgf("server recv: %v", data)
 
-		proxy.server.WriteTo(data, client)
+		if server := proxy.dataConn(); server != nil {
+			server.WriteTo(data, client)
+		}
 	}
 
 	proxy.clientMap.Delete(client)

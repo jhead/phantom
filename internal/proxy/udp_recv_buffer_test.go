@@ -84,10 +84,10 @@ func TestProxyForwardsLargeDatagramsBothWays(t *testing.T) {
 
 	// Wait until data plane is listening.
 	deadline := time.Now().Add(2 * time.Second)
-	for p.server == nil && time.Now().Before(deadline) {
+	for p.dataConn() == nil && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if p.server == nil {
+	if p.dataConn() == nil {
 		select {
 		case err := <-done:
 			t.Fatalf("Start failed: %v", err)
