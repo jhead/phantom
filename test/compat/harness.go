@@ -130,12 +130,13 @@ func RequirePingPort(t *testing.T) {
 
 // Opts configures a phantom subprocess.
 type Opts struct {
-	RemoteServer string        // -server (required)
-	BindPort     int           // -bind_port; 0 picks a free one
-	IdleTimeout  time.Duration // -timeout
-	RemovePorts  bool          // -remove_ports
-	Workers      int           // -workers
-	Debug        bool          // -debug
+	RemoteServer     string        // -server (required)
+	BindPort         int           // -bind_port; 0 picks a free one
+	IdleTimeout      time.Duration // -timeout
+	RemovePorts      bool          // -remove_ports
+	Workers          int           // -workers
+	Debug            bool          // -debug
+	DisableDiscovery bool          // -disable_discovery
 }
 
 // Phantom is a running phantom subprocess.
@@ -196,6 +197,9 @@ func Start(t *testing.T, opts Opts) *Phantom {
 	}
 	if opts.Debug {
 		args = append(args, "-debug")
+	}
+	if opts.DisableDiscovery {
+		args = append(args, "-disable_discovery")
 	}
 
 	out := &lockedBuffer{}

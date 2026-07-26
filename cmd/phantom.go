@@ -44,6 +44,7 @@ func main() {
 	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
 	removePortsArg := flag.Bool("remove_ports", false, "Optional: Forces ports to be excluded from pong packets (experimental)")
 	workersArg := flag.Uint("workers", 1, "Optional: Number of workers, useful for tweaking performance (experimental)")
+	disableDiscoveryArg := flag.Bool("disable_discovery", false, "Optional: Do not bind LAN discovery ports 19132/19133; data-plane pings on -bind_port still work")
 
 	// Prefer -ipv6: PowerShell treats bare -6 as a number, so the flag never reaches
 	// the process (see #124). Keep -6 as a legacy alias for cmd.exe / POSIX shells.
@@ -101,7 +102,7 @@ func main() {
 			EnableIPv6:               enableIPv6,
 			RemovePorts:              *removePortsArg,
 			NumWorkers:               *workersArg,
-			DisableDiscoveryListener: len(servers) > 1,
+			DisableDiscoveryListener: *disableDiscoveryArg || len(servers) > 1,
 		}
 
 		proxyServer, err := proxy.New(prefs)

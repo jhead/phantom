@@ -143,7 +143,7 @@ func TestServerIDIsStableAndPerInstance(t *testing.T) {
 	})
 
 	t.Run("differs-between-instances", func(t *testing.T) {
-		p2 := Start(t, Opts{RemoteServer: srv.Addr()})
+		p2 := Start(t, Opts{RemoteServer: srv.Addr(), DisableDiscovery: true})
 		if second := idOf(p2); second == first {
 			t.Errorf("two phantom instances advertised the same server id %q; "+
 				"clients cannot tell them apart", second)
