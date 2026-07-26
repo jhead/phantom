@@ -35,7 +35,15 @@ const udpRecvBufferSize = 65535
 const offlineTimeoutThreshold = 3
 
 var idleCheckInterval = 5 * time.Second
-var discoveryPingTimeout = 5 * time.Second
+
+// discoveryPingTimeout bounds how long a LAN probe waits for upstream. Keep this
+// below compat PingTimeout (2s) so clients pinging the bind port get a timely reply.
+var discoveryPingTimeout = 1500 * time.Millisecond
+
+// discoveryRecoveryProbeTimeout is used once the server is already marked offline:
+// a quick check whether upstream came back without making every LAN ping wait out
+// the full discoveryPingTimeout.
+var discoveryRecoveryProbeTimeout = 500 * time.Millisecond
 
 type ProxyServer struct {
 	bindAddress         *net.UDPAddr
@@ -448,7 +456,11 @@ func (proxy *ProxyServer) probeRemoteUnconnectedPong(ping []byte) ([]byte, error
 	}
 	defer conn.Close()
 
-	_ = conn.SetDeadline(time.Now().Add(discoveryPingTimeout))
+	timeout := discoveryPingTimeout
+	if proxy.serverOffline {
+		timeout = discoveryRecoveryProbeTimeout
+	}
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := conn.Write(ping); err != nil {
 		return nil, err
 	}
