@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
+	"github.com/jhead/phantom/internal/corpus"
 	"github.com/jhead/phantom/internal/util"
 )
 
@@ -64,43 +66,51 @@ var OfflinePong = UnconnectedPing{
 
 var dupeSemicolonRegex = regexp.MustCompile(";{2,}$")
 
-func ReadUnconnectedPing(in []byte) (reply *UnconnectedPing, err error) {
-	reply = &UnconnectedPing{}
-	buf := bytes.NewBuffer(in)
+func ReadUnconnectedPing(in []byte) (*UnconnectedPing, error) {
+	reply := &UnconnectedPing{}
+	buf := bytes.NewReader(in)
 
-	// Packet ID
-	buf.ReadByte()
+	packetID, err := buf.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+	if packetID != UnconnectedPongID {
+		return nil, fmt.Errorf("unexpected packet ID 0x%02x, want 0x%02x", packetID, UnconnectedPongID)
+	}
 
 	reply.PingTime = make([]byte, 8)
-	if _, err := buf.Read(reply.PingTime); err != nil {
+	if _, err := io.ReadFull(buf, reply.PingTime); err != nil {
 		return nil, err
 	}
 
 	reply.ID = make([]byte, 8)
-	if _, err := buf.Read(reply.ID); err != nil {
+	if _, err := io.ReadFull(buf, reply.ID); err != nil {
 		return nil, err
 	}
 
-	reply.Magic = make([]byte, 16)
-	if _, err := buf.Read(reply.Magic); err != nil {
+	reply.Magic = make([]byte, len(corpus.Magic))
+	if _, err := io.ReadFull(buf, reply.Magic); err != nil {
 		return nil, err
+	}
+	if !bytes.Equal(reply.Magic, corpus.Magic) {
+		return nil, fmt.Errorf("invalid RakNet magic")
 	}
 
 	pongLenBytes := make([]byte, 2)
-	if _, err := buf.Read(pongLenBytes); err != nil {
+	if _, err := io.ReadFull(buf, pongLenBytes); err != nil {
 		return nil, err
 	}
 
 	pongLen := binary.BigEndian.Uint16(pongLenBytes)
 
 	pongDataBytes := make([]byte, pongLen)
-	if _, err := buf.Read(pongDataBytes); err != nil {
+	if _, err := io.ReadFull(buf, pongDataBytes); err != nil {
 		return nil, err
 	}
 
 	reply.Pong = readPong(string(pongDataBytes))
 
-	return
+	return reply, nil
 }
 
 func (r UnconnectedPing) Build() bytes.Buffer {
