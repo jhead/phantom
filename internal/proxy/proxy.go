@@ -294,13 +294,15 @@ func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 		// If we don't do this, the client will get confused if you restart phantom.
 		packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
 
-		// Overwrite port numbers sent back from server (if any)
-		if packet.Pong.Port4 != "" && !proxy.prefs.RemovePorts {
-			packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
-			packet.Pong.Port6 = packet.Pong.Port4
-		} else if proxy.prefs.RemovePorts {
+		// Always advertise phantom's bind port. Upstream MOTDs (notably Geyser)
+		// often omit Port4/Port6; leaving them empty makes consoles fall back to
+		// 19132 or skip the LAN/Friends entry entirely.
+		if proxy.prefs.RemovePorts {
 			packet.Pong.Port4 = ""
 			packet.Pong.Port6 = ""
+		} else {
+			packet.Pong.Port4 = fmt.Sprintf("%d", proxy.boundPort)
+			packet.Pong.Port6 = packet.Pong.Port4
 		}
 
 		packetBuffer := packet.Build()
