@@ -58,6 +58,11 @@ is a package global, which makes "two instances must advertise different identit
 unobservable from inside a single process. It also exercises the artifact that ships,
 including its flag parsing.
 
+The bedrock-protocol side is driven by Node scripts, each a single-purpose CLI that
+prints one line of JSON. Go owns the version matrix, process lifecycle and every
+assertion, so `make test` remains the single entry point and Go contributors do not
+need to edit JavaScript.
+
 ### Boundary
 
 End to end tests must not import `internal/proto`, `internal/proxy` or
@@ -207,32 +212,6 @@ proxied path. If the direct connection fails, the client stack cannot run in tha
 environment and the test skips. Only a direct success followed by a proxied failure
 attributes the problem to phantom. Without that control, an unrelated problem in the
 client stack would be indistinguishable from a phantom bug.
-
-## Repository layout
-
-```
-internal/proto/corpus_test.go      parser and rebuild tests
-internal/proto/fuzz_test.go        fuzz target
-internal/proxy/rewrite_test.go     rewrite tests, in-package
-internal/corpus/                   fixture loader, embedded data, XFAIL registry
-internal/corpus/gen/               corpus capture and version drift tooling
-
-test/compat/DESIGN.md              this document
-test/compat/matrix.json            version sampling and shard assignment
-test/compat/harness.go             process lifecycle and readiness polling
-test/compat/e2e_test.go            end to end cases, build tag e2e
-test/compat/slow_test.go           timer-bound cases, build tags e2e and slow
-test/compat/node_test.go           real client stack, build tags e2e and node
-test/compat/fakeserver/            scriptable RakNet upstream
-test/compat/node/                  bedrock-protocol CLIs
-
-.github/workflows/ci.yml           per-push pipeline
-.github/workflows/nightly.yml      full sweep, extended fuzzing, drift check
-```
-
-Each Node script is a single-purpose CLI that prints one line of JSON. Go owns the
-version matrix, process lifecycle and every assertion, so `make test` remains the
-single entry point and Go contributors do not need to edit JavaScript.
 
 ## Continuous integration
 
