@@ -13,6 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Pins the toolchain to go.mod's declared minimum, so accidental use of a
+  # newer language feature is caught. Linux only - see the note in `t0`.
   unit:
     name: vet + race
     runs-on: ubuntu-latest
@@ -52,7 +54,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # A current toolchain, NOT go.mod's minimum, because macos-latest is
+          # now macos-26 and its dyld refuses binaries without an LC_UUID load
+          # command. Go's internal linker only started emitting one in 1.26
+          # (golang/go#69987, golang/go#78012), so building this repo with Go
+          # 1.21 on macOS 26 fails before any phantom code runs - including on
+          # pre-existing tests like internal/util.
+          #
+          # go.mod's directive stays at the true LANGUAGE minimum and is still
+          # exercised by the `unit` job on Linux, where LC_UUID is irrelevant.
+          go-version: 'stable'
           cache: true
 
       - name: Corpus + rewrite tests

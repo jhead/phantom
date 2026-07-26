@@ -295,18 +295,27 @@ Run locally on darwin/arm64:
 | T0 fuzz, 25s | **passing**, 11.4M execs, no crashers |
 | T1 e2e + slow (`-tags='e2e slow'`) | **passing**, ~30s |
 | T1 `ping` through phantom, all 8 matrix versions | **passing** — a real third-party parser accepts phantom's rewritten pong and sees phantom's port |
-| T1 full `connect` session | **not verified locally** — see below |
-| CI workflows | **not verified** — never executed; no runner available here |
+| T1 full `connect` session | **passing on Linux CI**, skips on darwin/arm64 — see below |
+| CI workflows | **passing** — PR #190, all jobs green |
 
-**The `connect` session tests have never actually run.** `bedrock-protocol`'s native
-RakNet addon crashes on darwin/arm64 (`trace/BPT trap`); it answers pings through a
-separate JS path, which is why the ping tier works. The tests are written with a
-**control connection**: they first connect straight to the upstream with phantom out
-of the path. If that fails, the environment cannot support the test and it *skips*;
-only if the direct connection succeeds and the proxied one fails is phantom blamed.
-So they are safe to land — they cannot produce a false accusation — but their first
-real execution will be on Linux CI, and they should be treated as unproven until a
-green run exists.
+**The `connect` session tests do not run on darwin/arm64.** `bedrock-protocol`'s
+native RakNet addon crashes there (`trace/BPT trap`); it answers pings through a
+separate JS path, which is why the ping tier still works locally. The tests are
+written with a **control connection**: they first connect straight to the upstream
+with phantom out of the path. If that fails, the environment cannot support the test
+and it *skips*; only if the direct connection succeeds and the proxied one fails is
+phantom blamed. They therefore cannot produce a false accusation on a broken host.
+
+On Linux CI they **execute and pass**: a real `bedrock-protocol` client completes the
+full RakNet handshake and login sequence through phantom for every sampled version.
+
+**macOS CI note.** The `t0` job pins a current Go toolchain rather than go.mod's
+minimum. `macos-latest` is now macOS 26, whose dyld rejects binaries with no LC_UUID
+load command, and Go's internal linker only began emitting one in 1.26
+(golang/go#69987, golang/go#78012). Under Go 1.21 the macOS job fails before any
+phantom code runs — `internal/util`, which predates this harness, fails identically.
+go.mod's directive remains the true language minimum and is still exercised by the
+`unit` job on Linux.
 
 Eight invariants currently XFAIL against real captured bytes, all registered in
 `internal/corpus/data/known_failures.json` against their `TODO.md` entries.
