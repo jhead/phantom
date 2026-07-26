@@ -6,7 +6,8 @@ SHELL=/bin/bash
 #   arm8/arm64     = 64-bit aarch64 (GOARCH=arm64). "arm8" does NOT mean
 #                    "any ARMv8 Raspberry Pi" — most Pi OS installs are still
 #                    32-bit and need arm7 (or arm6 on Pi Zero / Pi 1).
-OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-macos-arm8 bin/phantom-linux bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7 bin/phantom-linux-arm8 bin/phantom-linux-arm64
+# linux-x86 = GOARCH=386 (iSH on iOS is x86 userspace; ARM/amd64 builds fail there)
+OUT=bin/phantom-windows.exe bin/phantom-windows-32bit.exe bin/phantom-macos bin/phantom-macos-arm8 bin/phantom-linux bin/phantom-linux-x86 bin/phantom-linux-arm5 bin/phantom-linux-arm6 bin/phantom-linux-arm7 bin/phantom-linux-arm8 bin/phantom-linux-arm64
 CMDSRC=phantom.go
 
 build: prep ${OUT}
@@ -37,6 +38,12 @@ bin/phantom-linux:
 	popd
 
 # Termux on Android uses these linux/arm* targets (not GOOS=android).
+# 32-bit x86 for iSH (iOS) and other linux/386 environments.
+bin/phantom-linux-x86:
+	pushd cmd && \
+	CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -o ../bin/phantom-linux-x86 ${CMDSRC} && \
+	popd
+
 bin/phantom-linux-arm5:
 	pushd cmd && \
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -o ../bin/phantom-linux-arm5 ${CMDSRC} && \

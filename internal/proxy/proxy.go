@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"regexp"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jhead/phantom/internal/clientmap"
@@ -82,29 +85,24 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 }
 
 func (proxy *ProxyServer) Start() error {
-	// Bind to 19132 on all addresses to receive broadcasted pings
-	// Sets SO_REUSEADDR et al to support multiple instances of phantom
+	// Bind to 19132 on all addresses to receive broadcasted pings.
+	// Prefer reuseport when available; fall back on iSH and similar envs
+	// that reject SO_REUSEPORT with EINVAL (#94 / #108).
 	log.Info().Msgf("Binding ping server to port 19132")
-	if pingServer, err := reuse.ListenPacket("udp4", ":19132"); err == nil {
-		proxy.pingServer = pingServer
-
-		// Start proxying ping packets from the broadcast listener
-		go proxy.readLoop(proxy.pingServer)
-	} else {
-		// Bind failed
+	pingServer, err := listenPacket("udp4", ":19132")
+	if err != nil {
 		return err
 	}
+	proxy.pingServer = pingServer
+	go proxy.readLoop(proxy.pingServer)
 
 	// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
 	if proxy.prefs.EnableIPv6 {
 		log.Info().Msgf("Binding IPv6 ping server to port 19133")
-		if pingServerV6, err := reuse.ListenPacket("udp6", ":19133"); err == nil {
+		if pingServerV6, err := listenPacket("udp6", ":19133"); err == nil {
 			proxy.pingServerV6 = pingServerV6
-
-			// Start proxying ping packets from the broadcast listener
 			go proxy.readLoop(proxy.pingServerV6)
 		} else {
-			// IPv6 Bind failed
 			log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
 		}
 	}
@@ -116,12 +114,12 @@ func (proxy *ProxyServer) Start() error {
 
 	// Bind to specified UDP addr and port to receive data from Minecraft clients
 	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
-	if server, err := reuse.ListenPacket(network, proxy.bindAddress.String()); err == nil {
-		// a safe cast, I promise
-		proxy.server = server.(*net.UDPConn)
-	} else {
+	server, err := listenPacket(network, proxy.bindAddress.String())
+	if err != nil {
 		return err
 	}
+	// a safe cast, I promise
+	proxy.server = server.(*net.UDPConn)
 
 	log.Info().Msgf("Proxy server listening!")
 	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
@@ -130,6 +128,40 @@ func (proxy *ProxyServer) Start() error {
 	proxy.startWorkers(proxy.server)
 
 	return nil
+}
+
+// listenPacket prefers SO_REUSEPORT via libp2p/reuseport, but some platforms
+// (notably iSH on iOS) return EINVAL for that option. Fall back to the stdlib
+// listener only for that unsupported-option case so real bind conflicts still
+// surface as errors.
+func listenPacket(network, address string) (net.PacketConn, error) {
+	conn, err := reuse.ListenPacket(network, address)
+	if err == nil {
+		return conn, nil
+	}
+	if !isReuseportUnsupported(err) {
+		return nil, err
+	}
+	log.Warn().Msgf("reuseport listen %s %s unsupported (%v); falling back to net.ListenPacket", network, address, err)
+	return net.ListenPacket(network, address)
+}
+
+func isReuseportUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EINVAL) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Err != nil {
+		if errors.Is(opErr.Err, syscall.EINVAL) {
+			return true
+		}
+		err = opErr.Err
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "invalid argument")
 }
 
 func (proxy *ProxyServer) Close() {
