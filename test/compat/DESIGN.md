@@ -1,321 +1,279 @@
-# Cross-version compatibility harness — design
+# Cross-version compatibility test strategy
 
-Status: **implemented** — see §11 for what changed during the build and §12 for
-what is verified vs. unverified.
-Date: 2026-07-25 (rev 3)
-
-## 1. Problem
-
-phantom sits between a Bedrock client (console) and a remote Bedrock server. It is
-mostly a transparent UDP relay, but it *parses and rewrites* one packet type: the
-RakNet Unconnected Pong (`0x1c`), whose payload is a semicolon-delimited MOTD string
+phantom sits between a Minecraft Bedrock client and a remote Bedrock server. It is
+mostly a transparent UDP relay, but it parses and rewrites one packet type: the
+RakNet Unconnected Pong (0x1c), whose payload is a semicolon-delimited MOTD string
 whose shape changes as Mojang ships new protocol versions.
 
-Today we have no way to answer "does phantom still work on MC 1.2x?" without a
-console, a real server, and a human. The failure mode is silent and version-gated:
-phantom keeps proxying, but a new client either won't list the server or shows
-garbage.
+That makes compatibility failures silent and version-gated. phantom keeps proxying,
+but a client on a newer version either does not list the server or displays wrong
+information. This document describes the automated tests that catch those failures.
 
-**Goal:** an automated, CI-resident harness that validates phantom against N
-Minecraft protocol versions, and fails loudly when a new version breaks an invariant.
+## Goals
 
-## 2. What actually varies across versions
+- Validate phantom against every Minecraft protocol version the tooling supports.
+- Run unattended in CI on every push, with no external services and no credentials.
+- Fail loudly and specifically when a new protocol version breaks an invariant.
+- Stay current as new Minecraft versions ship, without relying on anyone to notice.
 
-Only four things can plausibly break phantom. The matrix targets these and nothing
-else — a naive full cross-product of every knob is combinatorial waste.
+## Test tiers
 
-| Dim | What varies | Range | phantom code at risk |
-|-----|-------------|-------|----------------------|
-| **D1** | Pong MOTD field count / semantics | ~40 MC versions; 12 fields historically, 13+ on modern servers | `proto.readPong`/`writePong` (fixed 12-field struct → **extra fields silently dropped**) |
-| **D2** | RakNet protocol version in `OpenConnectionRequest1` | 7–11 | pure passthrough — assert it *stays* passthrough |
-| **D3** | Negotiated MTU / max datagram size | ≤1464 payload | `maxMTU = 1472` read buffer; truncation risk |
-| **D4** | Client ping behavior (`0x01` vs `0x02`, ping-time echo) | 2 packet IDs | offline-pong path only matches `0x01`; pong never echoes ping time |
+There are two tiers. They differ in what they are allowed to know about phantom, not
+just in how fast they run.
 
-**Design consequence:** D1 gets the *broad sweep* across all N versions. D2/D3/D4 are
-orthogonal to version and get a small fixed scenario set at one pinned version. Keeps
-the matrix linear (N + k) instead of exponential (N × k).
+### T0: unit tests
 
-## 3. Two tiers, two testing philosophies
+T0 imports phantom's packages and calls them directly. It replays a corpus of pong
+payloads through the parser and the rewriter and asserts the resulting bytes and
+fields.
 
-The tiers are not just fast/slow — they are **different kinds of test**, and the
-boundary is enforced by what each is allowed to import.
+- Runs in well under a second, with no network, no ports, no subprocess and no Node.
+- Covers all 51 supported protocol versions on every push and on every OS.
+- Has full white-box access, so it can construct a ProxyServer with whatever internal
+  state a case needs and call unexported functions.
 
-### T0 — White-box unit tests (pure Go, no network)
+T0 is split across two packages because `rewriteUnconnectedPong` is an unexported
+method on `*ProxyServer` and Go cannot reach it from an external test package. Parser
+tests live in `internal/proto`, rewrite tests in `internal/proxy`.
 
-Imports `internal/proto` and `internal/proxy` and calls them **directly**. Replays a
-committed corpus of **real pong payloads captured per protocol version** through
-parse → rewrite → assert bytes.
+T0 also carries a fuzz target. `ReadUnconnectedPing` parses untrusted bytes straight
+off a UDP socket, which makes it the highest-value fuzz target in the codebase. It is
+seeded from the corpus so the fuzzer starts from realistic structure rather than
+discovering the RakNet header from scratch.
 
-- Runtime **< 1s**. No network, no ports, no Node, no subprocess.
-- Scales to all ~40 versions for free. This is the backbone of "N versions".
-- Full white-box freedom: construct a `ProxyServer` with whatever internal state a
-  case needs, call unexported functions, assert on struct fields not just bytes.
+### T1: end to end tests
 
-**Package placement is forced by Go, not chosen.** `rewriteUnconnectedPong` is an
-unexported method on `*ProxyServer`, so its tests must be in-package:
+T1 knows only the built phantom binary, its command line flags, and UDP sockets. It
+drives a real subprocess over real sockets.
+
+Two kinds of upstream stand behind phantom:
+
+- A scriptable fake server in `test/compat/fakeserver`, which gives byte-exact control
+  over the pong. It can emit malformed, truncated, oversized, zero-field and 30-field
+  pongs, none of which a real server can be made to produce.
+- A real bedrock-protocol server, paired with a real bedrock-protocol client. Its
+  parser judges phantom's rewritten pong, so a malformed rewrite fails against an
+  independent implementation rather than round-tripping through phantom's own parser
+  and hiding the same misunderstanding twice.
+
+phantom runs as a subprocess rather than in-process for three reasons. `Start()`
+blocks, `Close()` panics if called before a successful bind, and `serverID` is a
+package global, which makes "two instances must advertise different identities"
+unobservable from inside a single process. Running the built binary also exercises
+the artifact that actually ships, including its flag parsing.
+
+### Tier boundary
+
+T1 must not import `internal/proto`, `internal/proxy` or `internal/clientmap`. It may
+import `internal/corpus`, which holds fixture data and the known-failure registry and
+contains no phantom protocol logic.
+
+`TestBlackBoxRuleHolds` enforces this with `go list -deps` rather than relying on
+convention. If an assertion needs phantom's internals, it belongs in T0.
+
+A useful rule of thumb follows from the split: T0 invariants are about bytes and pure
+functions, T1 invariants are about process identity, sockets and time.
+
+## Invariants
+
+Given the pong bytes an upstream server sends and the bytes phantom emits in
+response, the following must hold.
+
+### Field preservation
+
+1. Edition, MOTD, ProtocolVersion, Version, Players, MaxPlayers, SubMOTD and GameType
+   pass through byte-identical. Covered by T0 and T1.
+2. Fields beyond the twelve phantom models are preserved. Real servers send thirteen.
+   Covered by T0.
+3. The 16-byte RakNet magic is unmodified. Covered by T0.
+
+### Rewriting
+
+4. The ServerID field carries phantom's instance identity, is stable across repeated
+   pings, and differs between two running instances. The multi-instance half is T1
+   only, since `serverID` is a package global.
+5. Port4 and Port6 carry phantom's bound port, and both are empty under
+   `-remove_ports`. A server that advertises no ports keeps advertising none. Covered
+   by T0 for the logic and T1 for the flag wiring.
+6. The pong echoes the ping time the client sent. Covered by T0 for the proxied path
+   and T1 for the offline path.
+7. The binary ServerGUID at bytes 9 to 16 is non-zero and per-instance. RakNet
+   identifies servers by this value, not by the MOTD string field. Covered by T0 and
+   T1.
+
+### Session behavior
+
+8. The RakNet handshake completes through phantom for RakNet protocol versions 8
+   through 11. Covered by T1.
+9. A real bedrock-protocol client completes the RakNet handshake and the login
+   sequence through phantom. Covered by T1.
+10. Payloads survive the round trip byte-identically at 1, 576, 1400, 1464 and 1472
+    bytes, or are dropped cleanly, never truncated silently. Covered by T1.
+11. Two concurrent clients never receive each other's datagrams. Covered by T1.
+12. An idle client is reaped after the configured timeout, and a later packet from
+    that client still proxies. Covered by T1.
+13. When the upstream stops responding phantom answers with its offline pong, and
+    when the upstream returns phantom resumes proxying without a restart. Covered by
+    T1.
+14. A client pinging with 0x02 receives an offline pong while the upstream is down,
+    as it does with 0x01. Covered by T1.
+
+### Robustness
+
+15. Truncated, oversized, zero-field and 30-field pongs never panic phantom and never
+    produce output an independent parser rejects. Covered by the T0 fuzz target and
+    by T1 against the fake server.
+
+## Test corpus
+
+The corpus lives in `internal/corpus/data` and is embedded into the binary, so tests
+resolve no paths at runtime.
+
+### Captured corpus
+
+`captured.json` holds real pong bytes recorded from a bedrock-protocol server, one
+entry per supported Minecraft version. It is regenerated by `make corpus` and
+committed, so a change in any version's wire bytes shows up as a reviewable diff.
+
+Regeneration is a development task. CI replays the committed bytes and never captures
+new ones.
+
+One limit is worth stating plainly. bedrock-protocol uses a single advertisement
+serializer, so the field count is constant across every version it emits and only the
+protocol number and version string vary. The captured corpus is therefore a drift
+anchor and a source of realistic bytes, not a source of shape diversity.
+
+### Synthetic corpus
+
+`synthetic.json` supplies the shape diversity the captured corpus cannot: 10, 12, 13,
+14 and 15 field pongs, empty fields, section-sign colour codes, multi-byte UTF-8, a
+raw semicolon inside the MOTD, an oversized MOTD, and 30 fields.
+
+It also supplies malformed frames: empty packets, truncation at several offsets, a
+length prefix that exceeds the body, a zeroed magic, and a ping packet ID on an
+otherwise valid pong.
+
+Fixtures that test a semantic defect are built as complete, well-formed frames with
+exactly one thing wrong. A hand-written truncated fixture would trip the length check
+first and prove nothing about the defect it claims to test.
+
+## Version matrix and sharding
+
+`test/compat/matrix.json` lists the versions T1 exercises and assigns each to a CI
+shard. T0 sweeps every supported version because it is cheap. T1 boots a real client
+and server per version, which is not, so it samples the oldest supported version, the
+newest, and the newest of each minor line in between.
+
+Sharding provides isolation as well as parallelism. phantom binds UDP port 19132
+unconditionally, and because it sets SO_REUSEPORT a second binder does not fail. The
+kernel load-balances datagrams between the two, so two concurrent cases on one host
+silently consume each other's packets. One shard per CI runner gives each its own
+network stack. Cases run serially within a shard.
+
+Locally the suite runs serially and checks port 19132 first, skipping with an
+explanatory message if it is busy, so a developer running Minecraft or phantom does
+not see confusing failures.
+
+## Known failure registry
+
+`internal/corpus/data/known_failures.json` records invariants phantom does not
+satisfy, each with a reason and a reference to the tracking entry in TODO.md.
+
+The registry has four outcomes:
+
+- Unregistered and passing: silent success.
+- Unregistered and failing: an ordinary test failure.
+- Registered and failing: reported as XFAIL, and the build stays green.
+- Registered and passing: reported as XPASS, and the build fails.
+
+The last case is the point of the mechanism. Fixing a protocol bug breaks the build
+until its entry is deleted, so the registry cannot decay into a list of things that
+were fixed long ago. It doubles as an accurate inventory of open protocol bugs.
+
+Assertions return an error rather than calling `t.Errorf` directly, so a failure can
+be captured and reinterpreted instead of being recorded immediately.
+
+## Harness mechanics
+
+Readiness is established by behavior. The harness pings until it receives a pong, or
+until a deadline expires. It does not scrape logs and it does not sleep for fixed
+intervals.
+
+`-bind_port` is always passed explicitly, because phantom's default of 0 selects a
+random port that the test would have no way to discover.
+
+Timeouts are named constants and scale with the `PHANTOM_TEST_TIMEOUT_SCALE`
+environment variable for slow machines. Negative cases, meaning cases that confirm a
+reply will not arrive, use a much shorter budget than readiness cases, since there is
+nothing left to wait for once phantom is known to be up.
+
+Cases that wait on phantom's real timers, such as the 5 second idle sweep, sit behind
+a `slow` build tag. CI includes them and `make test` does not.
+
+Tests that need a real client stack sit behind a `node` build tag, so the rest of T1
+runs on machines with no Node toolchain.
+
+Session tests open a control connection directly to the upstream before testing the
+proxied path. If the direct connection fails, the client stack cannot run in that
+environment and the test skips. Only a direct success followed by a proxied failure
+attributes the problem to phantom. Without that control, an unrelated problem in the
+client stack would be indistinguishable from a phantom bug.
+
+## Repository layout
 
 ```
-internal/proto/corpus_test.go     # package proto  — parse/build round-trip
-internal/proto/fuzz_test.go       # package proto  — FuzzReadUnconnectedPing
-internal/proxy/rewrite_test.go    # package proxy  — rewrite goldens (unexported method)
-test/compat/corpus/               # shared data only, no Go
+internal/proto/corpus_test.go      T0 parser and rebuild tests
+internal/proto/fuzz_test.go        T0 fuzz target
+internal/proxy/rewrite_test.go     T0 rewrite tests, in-package
+internal/corpus/                   fixture loader, embedded data, XFAIL registry
+internal/corpus/gen/               corpus capture and version drift tooling
+
+test/compat/DESIGN.md              this document
+test/compat/matrix.json            T1 version sampling and shard assignment
+test/compat/harness.go             T1 process lifecycle and readiness polling
+test/compat/e2e_test.go            T1 cases, build tag e2e
+test/compat/slow_test.go           T1 timer-bound cases, build tags e2e and slow
+test/compat/node_test.go           T1 real client stack, build tags e2e and node
+test/compat/fakeserver/            scriptable RakNet upstream
+test/compat/node/                  bedrock-protocol CLIs
+
+.github/workflows/ci.yml           per-push pipeline
+.github/workflows/nightly.yml      full sweep, extended fuzzing, drift check
 ```
 
-The **fuzz target** is a natural fit here and cheap: `ReadUnconnectedPing` is a parser
-eating untrusted network bytes, seeded from the version corpus. Short run in CI
-(`-fuzztime=30s`), longer nightly.
+The Node scripts are deliberately thin. Each is a single-purpose CLI that prints one
+line of JSON. Go owns the version matrix, process lifecycle and every assertion, so
+`make test` remains the single entry point and Go contributors do not need to edit
+JavaScript.
 
-### T1 — Black-box end-to-end (real binary, real UDP)
+## Continuous integration
 
-Knows **only** the built `phantom` binary, its CLI flags, and UDP sockets. It gets
-**zero imports from `internal/`** — that rule is what keeps it honest. If T1 needs a
-Go type from phantom to make an assertion, the assertion belongs in T0.
+The per-push pipeline runs four jobs:
 
-Two upstream flavors:
-- **Go fake server** (`test/compat/fakeserver`) — a standalone RakNet upstream with
-  byte-exact control over the pong. Emits malformed, truncated, oversized, zero-field
-  and 30-field pongs. Used for adversarial cases and D2/D3/D4.
-- **`bedrock-protocol` server/client** (Node, pinned) — a *real* stack. Its `ping()`
-  parses phantom's rewritten pong with a genuine third-party parser, so a malformed
-  rewrite fails loudly instead of round-tripping through our own buggy parser. Used
-  for full handshake + login + spawn.
+- `unit` runs gofmt, `go vet` and `go test -race`, pinned to the Go version declared
+  in go.mod so accidental use of a newer language feature is caught.
+- `t0` runs the corpus tests across Linux, macOS and Windows, plus a short fuzzing
+  pass. It uses a current Go toolchain rather than the declared minimum, because
+  recent macOS releases reject binaries without an LC_UUID load command and Go's
+  internal linker only began emitting one in 1.26.
+- `t1` runs the end to end tier across four shards, one per runner.
+- `cross-compile` builds every release target.
 
-- Runtime target **< 3 min** wall-clock across all shards.
-- Version sampling: oldest supported, latest, latest-of-each-minor ≈ 8–10 versions.
+The nightly pipeline runs the full unsampled version sweep, a long fuzzing pass, and a
+drift check that compares the versions bedrock-protocol supports against the versions
+this repository tests. The drift check is what keeps coverage current without relying
+on anyone to notice a new Minecraft release.
 
-## 4. Invariant → tier assignment
+## Out of scope
 
-Given upstream pong bytes `U` and the bytes `P` phantom emits:
-
-| # | Invariant | Tier | Status |
-|---|-----------|------|--------|
-| 1 | `Edition`, `MOTD`, `ProtocolVersion`, `Version`, `Players`, `MaxPlayers`, `SubMOTD`, `GameType` byte-identical `U`→`P` | T0 + T1 | ✅ |
-| 2 | **Trailing fields beyond the known 12 preserved** | T0 | ❌ XFAIL (D1) |
-| 3 | RakNet magic exactly 16 bytes, unmodified | T0 | ✅ |
-| 4a | `ServerID` replaced with phantom's instance ID | T0 | ✅ |
-| 4b | `ServerID` stable across pings; **differs between two running instances** | **T1 only** — `serverID` is a package global, unobservable in-process | ✅ |
-| 5 | `Port4`/`Port6` = bound port; both empty under `-remove_ports` | T0 (logic) + T1 (flag wiring) | ✅ |
-| 6 | `PingTime` echoes the *client's* ping time | T0 (build preserves) + T1 (offline path stamps) | ❌ XFAIL (D4) |
-| 7 | Binary `ServerGUID` (bytes 9–16) non-zero and per-instance | T0 + T1 (uniqueness) | ❌ XFAIL |
-| 8 | RakNet handshake completes for proto 8/9/10/11 | T1 | ✅ |
-| 9 | `bedrock-protocol` client reaches `spawn` through phantom | T1 | ✅ |
-| 10 | Payload integrity both directions at 1, 576, 1400, 1464, 1472, 1500 bytes — byte-identical or cleanly dropped, never silently truncated | T1 | ✅ |
-| 11 | Two concurrent clients never receive each other's datagrams | T1 | ✅ |
-| 12 | Idle client reaped after `-timeout` | T1 (slow) | ✅ |
-| 13 | Upstream down → offline pong; upstream back → proxying resumes, no restart | T1 (slow) | ✅ |
-| 14 | Client sending `0x02` gets an offline pong | T1 | ❌ XFAIL (D4) |
-| 15 | Malformed/truncated/30-field pongs never panic and never produce output the reference parser rejects | T0 (fuzz) + T1 (fake server) | ⚠️ partly |
-
-Note how cleanly the split falls out: **every T0 invariant is about bytes and pure
-functions; every T1-only invariant is about process identity, sockets, or time.**
-That's the boundary test — if a proposed case doesn't fit that description, it's in
-the wrong tier.
-
-## 5. Version matrix as data
-
-`test/compat/matrix.json` is the single source of truth, committed and reviewable:
-
-```json
-[
-  { "mc": "1.16.201", "protocol": 422, "raknet": 10, "tier1": true, "shard": 0, "fields": 12 },
-  { "mc": "1.21.0",   "protocol": 685, "raknet": 11, "tier1": true, "shard": 2, "fields": 13 },
-  { "mc": "1.26.30",  "protocol": 860, "raknet": 11, "tier1": true, "shard": 3, "fields": 13 }
-]
-```
-
-Two generators keep it honest:
-- `make corpus` — starts a `bedrock-protocol` server per entry, captures the raw pong,
-  writes `corpus/*.bin` + `*.golden.json`. Dev-time/nightly only; **CI never generates
-  the corpus, it only replays committed bytes.**
-- **Nightly matrix-drift job** — diffs `matrix.json` against `bedrock-protocol`'s
-  supported-version list; opens an issue when Mojang ships a version we don't cover.
-  This is what makes "N versions" stay current without human vigilance.
-
-## 6. CI structure
-
-GitHub Actions matrices, used where they earn their keep:
-
-**`ci.yml` — every push/PR**
-
-| Job | Matrix | Why |
-|-----|--------|-----|
-| `unit` | — | `go vet` (fails today on the unkeyed struct literal), `go test -race ./...` |
-| `t0` | `os: [ubuntu, macos, windows]` | Corpus + fuzz. Go-only, no deps, seconds. OS matrix is nearly free and catches endian/path/CRLF surprises. |
-| `t1` | `shard: [0,1,2,3]` | Build binary + `npm ci` + run that shard's versions serially |
-| `cross-compile` | — | All `make build` targets still link |
-
-**Why shard T1 rather than one job per version:** each job pays ~40–60s of
-checkout/toolchain/`npm ci` overhead for a few seconds of test. Per-version jobs would
-spend 90% of runner minutes on setup. Four shards balance that against parallelism and
-keep the PR check list readable.
-
-**The shard matrix also solves port isolation.** phantom hard-binds `:19132`
-unconditionally (`reuse.ListenPacket("udp4", ":19132")`), and `SO_REUSEPORT` means two
-instances *load-balance each other's packets* rather than failing cleanly — so two
-concurrent T1 cases on one machine would silently corrupt each other. Each shard gets
-its own runner, hence its own network stack. **Within** a shard, cases run serially.
-No network namespaces, no `unshare`, no root. Locally, `go test` runs serially and
-preflights `:19132`, **skipping with a clear message** if it's busy — a dev running
-Minecraft or phantom shouldn't see mysterious red.
-
-**`nightly.yml` — non-blocking**
-- Full ~40-version T1 sweep (vs. the ~10 sampled per-push)
-- Extended fuzzing (`-fuzztime=10m`)
-- Matrix-drift check
-
-## 7. Harness mechanics
-
-**Subprocess, not in-process.** T1 runs the built binary. `Start()` blocks, `Close()`
-nil-panics on early shutdown, and `serverID` is a package global — so invariant 4b is
-*impossible* in-process. Bonus: we test the shipped artifact and its flag parsing.
-
-**Readiness without sleeps.** Never `sleep`. Poll by *behavior*: retry the ping until
-a pong arrives or a deadline expires. No log-scraping, no fixed delays. Every timeout
-is a named, overridable constant.
-
-**Always pass `-bind_port` explicitly** — `-bind_port 0` randomizes it and the harness
-would have nothing to talk to.
-
-**Slow cases are tagged.** Idle-reap needs `-timeout 1` plus the 5s sweep ≈ 7s;
-offline/online recovery similar. Behind a `slow` build tag: included in CI, excluded
-from default `make test`.
-
-**Known-failing tests.** Invariants 2, 6, 7, 14 fail on `master` today — they are the
-open protocol bugs in `TODO.md`. Landing this harness must not turn CI permanently
-red. So `known_failures.json` maps test ID → TODO item, XFAIL-marked. CI **fails if an
-XFAIL unexpectedly passes**, forcing the marker deleted in the same PR that fixes the
-bug. The registry doubles as a live bug-status dashboard.
-
-## 8. Layout
-
-```
-internal/proto/corpus_test.go      # T0: parse/build round-trip      (package proto)
-internal/proto/fuzz_test.go        # T0: FuzzReadUnconnectedPing     (package proto)
-internal/proxy/rewrite_test.go     # T0: rewrite goldens             (package proxy)
-
-test/compat/
-  DESIGN.md            # this file
-  matrix.json          # version matrix (source of truth)
-  known_failures.json  # XFAIL registry → TODO.md items
-  corpus/              # captured pongs + goldens (shared T0 data, no Go)
-  harness.go           # T1: process lifecycle, readiness polling, preflight
-  e2e_test.go          # T1                         (build tag: e2e)
-  slow_test.go         # T1 slow cases              (build tag: e2e,slow)
-  fakeserver/          # T1: standalone scriptable RakNet upstream
-  node/                # pinned bedrock-protocol; ping.js / connect.js / serve.js
-
-.github/workflows/ci.yml
-.github/workflows/nightly.yml
-```
-
-Node stays *thin*: three single-purpose CLIs that print JSON on stdout. Go owns the
-matrix, process lifecycle, and every assertion — `make test` remains the one entry
-point and Go contributors never edit JS.
-
-## 9. Phasing
-
-| Phase | Deliverable | Value |
-|-------|-------------|-------|
-| **0** | `ci.yml`: `go vet`, `go test -race`, cross-compile | Closes "No CI" in TODO.md; catches the known `go vet` failure |
-| **1** | T0: corpus + goldens + fuzz + `matrix.json` | Broad N-version coverage, ~1s, zero deps |
-| **2** | `harness.go` + `fakeserver` + T1 core (1, 4b, 5–7, 10, 15) | Real UDP, real binary, no Node yet |
-| **3** | Node `bedrock-protocol` integration (8, 9) + shard matrix | Real third-party client stack validates our rewrite |
-| **4** | `nightly.yml`: full sweep, extended fuzz, matrix drift | Stays current without humans |
-
-Phases 0–1 alone would have caught the dropped-trailing-field bug, need no Node, and
-land independently. Recommend starting there.
-
-## 10. Explicit non-goals
-
-- **Real BDS testing — dropped.** Considered as a third tier; rejected for now. ~150MB
-  downloads, EULA, linux/amd64 only, and Mojang has broken old-version CDN URLs before.
-  Revisit only if T0/T1 prove insufficient at catching real drift.
-- Not a performance or load benchmark.
-- Not testing real consoles (Xbox/PS), and **not testing LAN broadcast discovery** to
-  `255.255.255.255`. This is a genuine gap, not a non-issue: broadcast *is* phantom's
-  real discovery path on console. Covering it needs a `dummy0` interface (Linux, root).
-  Deferred deliberately.
-- Not testing Xbox Live auth — offline mode only.
-- Not asserting game-layer packet semantics; phantom is opaque above RakNet and the
-  harness treats it that way.
-
-## 11. What changed during implementation
-
-Eight deviations from rev 2, each with its reason.
-
-1. **Corpus lives in `internal/corpus/`, not `test/compat/corpus/`.** Both T0 test
-   packages need it, and `go:embed` cannot reach outside its own package directory.
-   Embedding removes all relative-path resolution from the tests.
-
-2. **Corpus is consolidated JSON, not per-version `.bin` + `.golden.json`.** 51
-   versions would have meant 102 near-identical files. One `captured.json` shows
-   exactly which version's bytes changed in a diff.
-
-3. **No golden output bytes.** Storing phantom's current output as "expected" would
-   enshrine the very bugs the harness exists to find. T0 asserts the field-level
-   *invariants* from §4 instead. Strictly better, and it made the XFAIL registry
-   meaningful.
-
-4. **The black-box rule is "no *implementation* imports".** T1 may import
-   `internal/corpus` (fixture data and the XFAIL registry, zero phantom protocol
-   logic); it may not import `internal/proto`, `internal/proxy` or
-   `internal/clientmap`. `TestBlackBoxRuleHolds` enforces this with `go list -deps`
-   rather than trusting anyone to remember.
-
-5. **Invariant 9 is "reaches `join`", not "reaches `spawn`".** A client only spawns
-   once the server sends `start_game` and chunk data, which `bedrock-protocol`'s
-   `createServer` does not do on its own. Writing a mini game server would test
-   game-layer semantics that are an explicit non-goal, across 8 versions, while
-   making phantom bugs indistinguishable from gaps in our fake server. Reaching
-   `join` already proves the full RakNet handshake *and* login completed through
-   phantom — which is the entire surface phantom actually relays.
-
-6. **A `node` build tag, separate from `e2e`.** The rest of T1 runs on machines with
-   no Node toolchain.
-
-7. **`go 1.12` → `go 1.21` in go.mod.** `go:embed` needs ≥1.16 and native fuzzing
-   needs ≥1.18. Not optional. `cmd/phantom.go`'s unkeyed struct literal was also
-   fixed, because Phase 0 CI runs `go vet` and it failed on it.
-
-8. **The captured corpus has a real limitation, recorded in the file itself.**
-   `bedrock-protocol` emits a **constant 13-field pong across all 51 versions** —
-   only the protocol number and version string vary. So per-version capture is a
-   drift *anchor*, not a source of shape diversity. That diversity is what
-   `synthetic.json` is for (10-, 12-, 13-, 14- and 15-field shapes, plus hostile
-   content and malformed frames). Worth knowing before anyone assumes 51 captured
-   versions means 51 distinct shapes tested.
-
-## 12. Verification status
-
-Run locally on darwin/arm64:
-
-| Tier | Result |
-|------|--------|
-| T0 corpus + rewrite (`go test ./internal/...`) | **passing**, ~0.3s, 51 versions swept |
-| T0 fuzz, 25s | **passing**, 11.4M execs, no crashers |
-| T1 e2e + slow (`-tags='e2e slow'`) | **passing**, ~30s |
-| T1 `ping` through phantom, all 8 matrix versions | **passing** — a real third-party parser accepts phantom's rewritten pong and sees phantom's port |
-| T1 full `connect` session | **passing on Linux CI**, skips on darwin/arm64 — see below |
-| CI workflows | **passing** — PR #190, all jobs green |
-
-**The `connect` session tests do not run on darwin/arm64.** `bedrock-protocol`'s
-native RakNet addon crashes there (`trace/BPT trap`); it answers pings through a
-separate JS path, which is why the ping tier still works locally. The tests are
-written with a **control connection**: they first connect straight to the upstream
-with phantom out of the path. If that fails, the environment cannot support the test
-and it *skips*; only if the direct connection succeeds and the proxied one fails is
-phantom blamed. They therefore cannot produce a false accusation on a broken host.
-
-On Linux CI they **execute and pass**: a real `bedrock-protocol` client completes the
-full RakNet handshake and login sequence through phantom for every sampled version.
-
-**macOS CI note.** The `t0` job pins a current Go toolchain rather than go.mod's
-minimum. `macos-latest` is now macOS 26, whose dyld rejects binaries with no LC_UUID
-load command, and Go's internal linker only began emitting one in 1.26
-(golang/go#69987, golang/go#78012). Under Go 1.21 the macOS job fails before any
-phantom code runs — `internal/util`, which predates this harness, fails identically.
-go.mod's directive remains the true language minimum and is still exercised by the
-`unit` job on Linux.
-
-Eight invariants currently XFAIL against real captured bytes, all registered in
-`internal/corpus/data/known_failures.json` against their `TODO.md` entries.
+- Performance and load testing.
+- Real console clients, and LAN broadcast discovery to 255.255.255.255. Broadcast is
+  phantom's real discovery path on console, so this is a genuine gap. Covering it
+  needs a dummy network interface and root.
+- Xbox Live authentication. All tests run in offline mode.
+- Game-layer packet semantics. phantom is opaque above RakNet and the tests treat it
+  that way. Session tests assert that login completes, not what the server sends
+  afterwards.
+- Testing against Mojang's Bedrock Dedicated Server, which would add large downloads,
+  an EULA, a single supported architecture, and dependence on version-specific
+  download URLs that have broken in the past.
