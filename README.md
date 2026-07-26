@@ -40,6 +40,29 @@ needs the 32-bit build:
 fails with `Illegal instruction` or `Exec format error` — use `arm7` (or
 `arm6`) instead.
 
+**Termux on Android**
+
+Termux can run the regular **Linux ARM** builds — you do **not** need a
+`GOOS=android` binary (that requires the Android NDK). Pick by `uname -m`:
+
+| `uname -m` | Download |
+|---|---|
+| `aarch64` or `arm64` | `phantom-linux-arm8` |
+| `armv7l` | `phantom-linux-arm7` |
+| older / unsure | `phantom-linux-arm5` (widest compatibility) |
+
+Do **not** use plain `phantom-linux` (that is amd64). Copy the binary into
+Termux home (`$HOME`) — shared storage under `/storage/...` is often mounted
+`noexec`, which causes `Permission denied` even after `chmod`. Then:
+
+```bash
+cd $HOME
+chmod u+x ./phantom-linux-arm8   # or arm7 / arm5
+./phantom-linux-arm8 -server example.com:19132
+```
+
+Run the binary as its own command; do not append `-server` to `cd`.
+
 ## Usage
 
 Open up a command prompt (Windows) or terminal (macOS & Linux) to the location
@@ -154,7 +177,7 @@ computer, a VM, or even with a Minecraft hosting service.
 ## Supported platforms
 
 - This tool should work on Windows, macOS, and Linux.
-- ARM builds are available for Raspberry Pi and similar SOCs (see Installing for which binary to use).
+- ARM builds are available for Raspberry Pi, Termux on Android, and similar SOCs (see Installing for which binary to use).
 - Minecraft for Windows 10, iOS/Android, Xbox One, and PS4 are currently supported.
 - **Nintendo Switch is not supported.**
 
@@ -170,6 +193,17 @@ You almost certainly downloaded the wrong ARM build. `phantom-linux-arm8` is
 64-bit (`aarch64`). On 32-bit Raspberry Pi OS (`uname -m` shows `armv7l` or
 `armv6l`), use `phantom-linux-arm7` or `phantom-linux-arm6` instead — even if
 the board itself is ARMv8.
+
+**`Permission denied` or `cannot execute binary file` in Termux**
+
+Move the binary into `$HOME` (not `/storage/...`), `chmod u+x`, and use the
+ARM Linux build that matches `uname -m` — not `phantom-linux` (amd64) and not
+an Android/`GOOS=android` build. See Installing → Termux on Android.
+
+**`cd: too many arguments`**
+
+`cd` only changes directory. Run phantom separately, e.g.
+`cd ~/phantom && ./phantom-linux-arm8 -server 1.2.3.4:19132`.
 
 **My server isn't showing up on the list but it's online and phantom is showing connections!**
 
