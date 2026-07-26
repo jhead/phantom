@@ -80,7 +80,7 @@ func (hub *DiscoveryHub) readLoop(listener net.PacketConn) {
 			log.Warn().Msgf("Discovery read error: %v", err)
 			continue
 		}
-		if n < 1 || buf[0] != proto.UnconnectedPingID {
+		if n < 1 || !proto.IsUnconnectedDiscoveryPing(buf[0]) {
 			continue
 		}
 

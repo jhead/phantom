@@ -13,7 +13,13 @@ import (
 )
 
 var UnconnectedPingID byte = 0x01
+var UnconnectedPingOpenID byte = 0x02
 var UnconnectedPongID byte = 0x1C
+
+// IsUnconnectedDiscoveryPing reports whether id is an offline LAN discovery ping.
+func IsUnconnectedDiscoveryPing(id byte) bool {
+	return id == UnconnectedPingID || id == UnconnectedPingOpenID
+}
 
 type UnconnectedPing struct {
 	PingTime []byte

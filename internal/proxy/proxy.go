@@ -254,7 +254,7 @@ func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) erro
 	if from == nil {
 		return fmt.Errorf("nil client address")
 	}
-	if len(data) < 1 || data[0] != proto.UnconnectedPingID {
+	if len(data) < 1 || !proto.IsUnconnectedDiscoveryPing(data[0]) {
 		return fmt.Errorf("not an unconnected ping")
 	}
 	return proxy.handleDiscoveryPing(from, data)
@@ -330,7 +330,7 @@ func (proxy *ProxyServer) processDataFromClients(listener net.PacketConn, packet
 	// console re-pings keep refreshing SetReadDeadline + idle lastActive, so
 	// the session never expires and the server vanishes from LAN until restart
 	// (GitHub #117).
-	if data[0] == proto.UnconnectedPingID {
+	if len(data) >= 1 && proto.IsUnconnectedDiscoveryPing(data[0]) {
 		return proxy.handleDiscoveryPing(client, data)
 	}
 

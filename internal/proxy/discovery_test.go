@@ -64,6 +64,49 @@ func TestHandleUnconnectedPingOfflineReply(t *testing.T) {
 	}
 }
 
+func TestHandleUnconnectedPingOpenConnections(t *testing.T) {
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	p, err := New(ProxyPrefs{
+		BindAddress:              "127.0.0.1",
+		BindPort:                 0,
+		RemoteServer:             "127.0.0.1:1",
+		IdleTimeout:              time.Minute,
+		NumWorkers:               1,
+		DisableDiscoveryListener: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.StartAsync(); err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	prev := discoveryPingTimeout
+	discoveryPingTimeout = 200 * time.Millisecond
+	defer func() { discoveryPingTimeout = prev }()
+
+	ping := []byte{proto.UnconnectedPingOpenID, 1, 2, 3, 4, 5, 6, 7, 8}
+	if err := p.HandleUnconnectedPing(ping, client.LocalAddr()); err != nil {
+		t.Fatalf("HandleUnconnectedPing 0x02: %v", err)
+	}
+
+	_ = client.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := client.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("client ReadFrom: %v", err)
+	}
+	if n < 1 || buf[0] != proto.UnconnectedPongID {
+		t.Fatalf("expected UnconnectedPong for 0x02 ping, got n=%d id=%v", n, buf[:n])
+	}
+}
+
 func TestHandleUnconnectedPingRejectsBadInput(t *testing.T) {
 	p, err := New(ProxyPrefs{
 		BindAddress:              "127.0.0.1",
