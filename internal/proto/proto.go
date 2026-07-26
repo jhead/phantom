@@ -48,6 +48,11 @@ var OfflinePong = UnconnectedPing{
 		MaxPlayers:      "0",
 		GameType:        "Creative",
 		NintendoLimited: "1",
+		// Placeholder ports so rewriteUnconnectedPong overwrites them with
+		// phantom's bind port. Empty ports make clients fall back to :19132,
+		// whose replies come from the data port and fail the join (#104).
+		Port4: "0",
+		Port6: "0",
 	},
 }.Build()
 
