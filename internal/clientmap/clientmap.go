@@ -129,12 +129,6 @@ func (cm *ClientMap) IsOwnAddress(addr net.Addr) bool {
 	return false
 }
 
-// Len returns the number of active client connections.
-func (cm *ClientMap) Len() int {
-	cm.mutex.RLock()
-	defer cm.mutex.RUnlock()
-	return len(cm.clients)
-}
 
 // Get gets or creates a new UDP connection to the remote server and stores it
 // in a map, matching clients to remote server connections. This way, we keep one

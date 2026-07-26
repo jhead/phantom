@@ -138,14 +138,22 @@ Same as above but bind the proxy server to local IP 10.0.0.5 and port 19133:
 ./phantom-<os> -bind 10.0.0.5 -bind_port 19133 -server lax.mcbr.cubed.host:19132
 ```
 
-**Running multiple instances**
+**Running multiple servers**
 
-If you have multiple Bedrock servers, you can run phantom multiple times on
-the same device to allow all of your servers to show up on the LAN list. All
-you have to do is start one instance of phantom for each server and set the
-`-server` flag appropriately. You don't need to use `-bind` or change the port.
-But you probably do need to make sure you have a firewall rule that allows
-all UDP traffic for the phantom executable.
+If you have multiple Bedrock servers, pass each one to a **single** phantom
+process with repeated or comma-separated `-server` flags:
+
+```bash
+./phantom-<os> -server 192.168.1.13:19134 -server 192.168.1.13:19136
+# or
+./phantom-<os> -server 192.168.1.13:19134,192.168.1.13:19136
+```
+
+Phantom binds LAN discovery (`:19132`) once and answers for every upstream
+server, so they all appear in the Friends/LAN list at the same time. Running
+multiple phantom *processes* cannot share `:19132` correctly — only one will
+see traffic — so use multiple `-server` flags instead. You probably also need
+a firewall rule that allows all UDP traffic for the phantom executable.
 
 **A note on `-bind`:**
 

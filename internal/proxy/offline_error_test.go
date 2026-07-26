@@ -37,14 +37,6 @@ func TestIsOfflineError(t *testing.T) {
 	}
 }
 
-type timeoutError struct{}
-
-func (timeoutError) Error() string   { return "i/o timeout" }
-func (timeoutError) Timeout() bool   { return true }
-func (timeoutError) Temporary() bool { return true }
-
-// Ensure timeoutError satisfies net.Error at compile time.
-var _ net.Error = timeoutError{}
 
 // Keep the idle deadline behavior documented: a timeout longer than the
 // per-write read deadline should still classify as offline.

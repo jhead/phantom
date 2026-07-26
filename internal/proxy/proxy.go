@@ -48,6 +48,7 @@ type ProxyServer struct {
 	dead                *abool.AtomicBool
 	serverOffline       bool
 	offlineTimeouts     int
+	serverID            int64
 }
 
 type ProxyPrefs struct {
@@ -57,11 +58,13 @@ type ProxyPrefs struct {
 	IdleTimeout  time.Duration
 	EnableIPv6   bool
 	RemovePorts  bool
-	NumWorkers   uint
+	NumWorkers               uint
+	// DisableDiscoveryListener skips binding :19132/:19133. Used when a
+	// DiscoveryHub owns discovery and fans pings into HandleUnconnectedPing.
+	DisableDiscoveryListener bool
 }
 
 var randSource = rand.NewSource(time.Now().UnixNano())
-var serverID = randSource.Int63()
 var offlineErrorRegex = regexp.MustCompile("(timeout)|(connection refused)")
 
 // isOfflineError reports whether err indicates the remote Bedrock server is
@@ -115,51 +118,65 @@ func New(prefs ProxyPrefs) (*ProxyServer, error) {
 		abool.New(),
 		false,
 		0,
+		randSource.Int63(),
 	}, nil
 }
 
 func (proxy *ProxyServer) Start() error {
-	// Bind to 19132 on all addresses to receive broadcasted pings.
-	// Prefer reuseport when available; fall back on iSH and similar envs
-	// that reject SO_REUSEPORT with EINVAL (#94 / #108).
-	log.Info().Msgf("Binding ping server to port 19132")
-	pingServer, err := listenPacket("udp4", ":19132")
-	if err != nil {
+	if err := proxy.listen(); err != nil {
 		return err
 	}
-	proxy.pingServer = pingServer
-	go proxy.readLoop(proxy.pingServer)
-
-	// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
-	if proxy.prefs.EnableIPv6 {
-		log.Info().Msgf("Binding IPv6 ping server to port 19133")
-		if pingServerV6, err := listenPacket("udp6", ":19133"); err == nil {
-			proxy.pingServerV6 = pingServerV6
-			go proxy.readLoop(proxy.pingServerV6)
-		} else {
-			log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
-		}
-	}
-
-	network := "udp4"
-	if proxy.prefs.EnableIPv6 {
-		network = "udp"
-	}
-
-	// Bind to specified UDP addr and port to receive data from Minecraft clients
-	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
-	server, err := listenPacket(network, proxy.bindAddress.String())
-	if err != nil {
-		return err
-	}
-	// a safe cast, I promise
-	proxy.server = server.(*net.UDPConn)
-
-	log.Info().Msgf("Proxy server listening!")
-	log.Info().Msgf("Once your console pings phantom, you should see replies below.")
 
 	// Start processing everything else using the proxy listener
 	proxy.startWorkers(proxy.server)
+
+	return nil
+}
+
+// StartAsync is like Start but runs all workers in goroutines and returns once
+// listening. Used when one process hosts multiple proxies behind a DiscoveryHub.
+func (proxy *ProxyServer) StartAsync() error {
+	if err := proxy.listen(); err != nil {
+		return err
+	}
+
+	log.Info().Msgf("Starting %d workers", proxy.prefs.NumWorkers)
+	for i := uint(0); i < proxy.prefs.NumWorkers; i++ {
+		go proxy.readLoop(proxy.server)
+	}
+	return nil
+}
+
+func (proxy *ProxyServer) listen() error {
+	if !proxy.prefs.DisableDiscoveryListener {
+		// Exclusive bind: SO_REUSEPORT/ADDR cannot correctly share discovery
+		// across processes (see DiscoveryHub / #175).
+		log.Info().Msgf("Binding ping server to port 19132")
+		pingServer, err := net.ListenPacket("udp4", ":19132")
+		if err != nil {
+			return fmt.Errorf("bind :19132: %w (only one phantom can own LAN discovery; pass multiple -server flags to one process instead of running multiple instances)", err)
+		}
+		proxy.pingServer = pingServer
+		go proxy.readLoop(proxy.pingServer)
+
+		// Minecraft automatically broadcasts on port 19133 to the local IPv6 network
+		if proxy.prefs.EnableIPv6 {
+			log.Info().Msgf("Binding IPv6 ping server to port 19133")
+			if pingServerV6, err := net.ListenPacket("udp6", ":19133"); err == nil {
+				proxy.pingServerV6 = pingServerV6
+				go proxy.readLoop(proxy.pingServerV6)
+			} else {
+				log.Warn().Msgf("Failed to bind IPv6 ping listener: %v", err)
+			}
+		}
+	}
+
+	log.Info().Msgf("Binding proxy server to: %v", proxy.bindAddress)
+	proxyServer, err := net.ListenUDP("udp", proxy.bindAddress)
+	if err != nil {
+		return err
+	}
+	proxy.server = proxyServer
 
 	return nil
 }
@@ -215,6 +232,18 @@ func (proxy *ProxyServer) Close() {
 
 	// Close all connections
 	proxy.clientMap.Close()
+}
+
+
+// RemoteServer returns the upstream address this proxy forwards to.
+func (proxy *ProxyServer) RemoteServer() string {
+	return proxy.prefs.RemoteServer
+}
+
+// HandleUnconnectedPing processes a discovery ping fanned out from a
+// DiscoveryHub. Uses the dedicated discovery probe path (#117).
+func (proxy *ProxyServer) HandleUnconnectedPing(data []byte, from net.Addr) error {
+	return proxy.handleDiscoveryPing(from, data)
 }
 
 func (proxy *ProxyServer) startWorkers(listener net.PacketConn) {
@@ -517,7 +546,7 @@ func (proxy *ProxyServer) rewriteUnconnectedPong(data []byte) []byte {
 	if packet, err := proto.ReadUnconnectedPing(data); err == nil {
 		// Overwrite the server ID with one unique to this phantom instance.
 		// If we don't do this, the client will get confused if you restart phantom.
-		packet.Pong.ServerID = fmt.Sprintf("%d", serverID)
+		packet.Pong.ServerID = fmt.Sprintf("%d", proxy.serverID)
 
 		// Always advertise phantom's bind port. Upstream MOTDs (notably Geyser)
 		// often omit Port4/Port6; leaving them empty makes consoles fall back to
