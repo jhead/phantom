@@ -1,0 +1,74 @@
+name: Nightly compatibility
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs the live tier against EVERY supported version rather than the sampled
+  # subset CI uses, by clearing PHANTOM_SHARD.
+  full-sweep:
+    name: Full version sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: test/compat/node/package-lock.json
+
+      - name: Install bedrock-protocol
+        working-directory: test/compat/node
+        run: npm ci
+
+      - name: Every version, unsharded
+        run: go test -tags='e2e slow node' ./test/compat/... -timeout=45m -v
+
+  extended-fuzz:
+    name: Extended fuzzing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fuzz the pong parser (10m)
+        run: go test ./internal/proto/ -run=Fuzz -fuzz=FuzzReadUnconnectedPing -fuzztime=10m
+
+      - name: Upload any crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus
+          path: internal/proto/testdata/fuzz/
+
+  # The mechanism that keeps "N versions" honest over time: when Mojang ships a
+  # version and bedrock-protocol adds support, this goes red and tells you
+  # exactly which file to regenerate.
+  matrix-drift:
+    name: Version matrix drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install generator deps
+        working-directory: internal/corpus/gen
+        run: npm install --no-audit --no-fund
+
+      - name: Check for new Minecraft versions
+        working-directory: internal/corpus/gen
+        run: node drift.js

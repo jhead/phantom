@@ -1,0 +1,9 @@
+{
+  "name": "phantom-compat-node",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Thin bedrock-protocol CLIs driven by the Go compatibility harness",
+  "dependencies": {
+    "bedrock-protocol": "3.57.0"
+  }
+}

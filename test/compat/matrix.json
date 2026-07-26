@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "T1 version matrix: which Minecraft versions the live end-to-end tier exercises,",
+    "and how they are distributed across CI shards.",
+    "",
+    "This is NOT the full version list. T0 sweeps all 51 supported versions from",
+    "internal/corpus/data/captured.json in under a second; booting a real client and",
+    "server stack per version is far too slow for that, so T1 samples: the oldest",
+    "supported version, the newest, and the newest of each minor line in between.",
+    "",
+    "Sharding exists for isolation, not just speed. phantom binds UDP :19132",
+    "unconditionally and sets SO_REUSEPORT, so two concurrent instances on one host",
+    "load-balance each other's datagrams instead of failing cleanly. One shard per",
+    "CI runner gives each its own network stack. Within a shard, cases run serially.",
+    "",
+    "Adding a version: add it here with a shard, and keep the shards balanced.",
+    "The nightly matrix-drift job flags versions bedrock-protocol supports that",
+    "this file does not."
+  ],
+  "shards": 4,
+  "versions": [
+    { "mc": "1.16.201", "protocol": 422, "raknet": 10, "shard": 0, "note": "oldest supported by bedrock-protocol" },
+    { "mc": "1.16.220", "protocol": 431, "raknet": 10, "shard": 0 },
+    { "mc": "1.17.40", "protocol": 471, "raknet": 10, "shard": 1 },
+    { "mc": "1.18.30", "protocol": 503, "raknet": 10, "shard": 1 },
+    { "mc": "1.19.80", "protocol": 582, "raknet": 11, "shard": 2 },
+    { "mc": "1.20.80", "protocol": 671, "raknet": 11, "shard": 2 },
+    { "mc": "1.21.130", "protocol": 898, "raknet": 11, "shard": 3 },
+    { "mc": "1.26.30", "protocol": 1001, "raknet": 11, "shard": 3, "note": "newest supported" }
+  ]
+}

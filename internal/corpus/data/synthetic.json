@@ -1,0 +1,161 @@
+{
+  "_comment": [
+    "HAND-AUTHORED fixtures. Unlike captured.json (which is real bedrock-protocol",
+    "wire bytes but a constant 13-field shape across every version), this file is",
+    "where actual pong SHAPE diversity lives: historical field counts, hypothetical",
+    "future field counts, hostile content, and malformed frames.",
+    "",
+    "Entries with 'motd' get a well-formed RakNet frame built around them by the Go",
+    "loader. Entries with 'rawHex' are used verbatim, for testing malformed frames.",
+    "",
+    "'wantParseError' means proto.ReadUnconnectedPing SHOULD reject the input.",
+    "Where phantom currently accepts garbage instead, the case is registered in",
+    "known_failures.json rather than deleted."
+  ],
+  "pingTime": "0011223344556677",
+  "serverGUID": "a1b2c3d4e5f60718",
+  "entries": [
+    {
+      "id": "shape/legacy-10-field",
+      "desc": "Pre-port-advertisement MCPE pong: no Port4/Port6 fields at all.",
+      "motd": "MCPE;Legacy Server;390;1.14.60;0;10;12345678;Sub;Survival;1;",
+      "fieldCount": 10,
+      "tags": ["shape"]
+    },
+    {
+      "id": "shape/classic-12-field",
+      "desc": "The shape phantom's PongData struct was written against.",
+      "motd": "MCPE;Classic Server;422;1.16.201;3;10;12345678;Sub;Survival;1;19132;19133;",
+      "fieldCount": 12,
+      "tags": ["shape"]
+    },
+    {
+      "id": "shape/modern-13-field",
+      "desc": "Current real-world shape: a 13th field (editor-mode flag) after Port6. phantom's fixed 12-field struct drops it.",
+      "motd": "MCPE;Modern Server;800;1.21.80;5;20;12345678;Sub;Creative;1;19132;19133;0;",
+      "fieldCount": 13,
+      "tags": ["shape", "forwards-compat"]
+    },
+    {
+      "id": "shape/future-15-field",
+      "desc": "Forwards-compat guard: Mojang adds two more fields. Must survive the rewrite untouched.",
+      "motd": "MCPE;Future Server;9999;1.99.0;1;100;12345678;Sub;Creative;1;19132;19133;0;newFieldA;newFieldB;",
+      "fieldCount": 15,
+      "tags": ["shape", "forwards-compat"]
+    },
+    {
+      "id": "shape/no-trailing-semicolon",
+      "desc": "Server omits the trailing separator. Field values must not shift.",
+      "motd": "MCPE;No Trailer;800;1.21.80;5;20;12345678;Sub;Creative;1;19132;19133",
+      "fieldCount": 12,
+      "tags": ["shape"]
+    },
+    {
+      "id": "content/empty-motd-fields",
+      "desc": "Server advertises empty MOTD and SubMOTD. Empty must stay empty, not collapse.",
+      "motd": "MCPE;;800;1.21.80;0;10;12345678;;Survival;1;19132;19133;0;",
+      "fieldCount": 13,
+      "tags": ["content"]
+    },
+    {
+      "id": "content/section-color-codes",
+      "desc": "MOTD with Bedrock section-sign colour codes, as phantom's own offline pong uses.",
+      "motd": "MCPE;§cRed §aGreen §9Blue;800;1.21.80;0;10;12345678;§eSub;Survival;1;19132;19133;0;",
+      "fieldCount": 13,
+      "tags": ["content"]
+    },
+    {
+      "id": "content/utf8-multibyte",
+      "desc": "Multi-byte UTF-8 in the MOTD. Length prefix is BYTES, not runes - a rune-based length would corrupt this.",
+      "motd": "MCPE;サーバー 🎮 Ünïcödé;800;1.21.80;0;10;12345678;Sub;Survival;1;19132;19133;0;",
+      "fieldCount": 13,
+      "tags": ["content"]
+    },
+    {
+      "id": "content/semicolon-in-motd",
+      "desc": "A server puts a raw ';' inside the MOTD. The protocol has no escaping, so every later field shifts by one. phantom must not corrupt or crash.",
+      "motd": "MCPE;Broken;MOTD;800;1.21.80;0;10;12345678;Sub;Survival;1;19132;19133;0;",
+      "fieldCount": 14,
+      "tags": ["content", "hostile"]
+    },
+    {
+      "id": "content/long-motd",
+      "desc": "MOTD long enough to push the pong past a typical MTU. Guards the 1472-byte read buffer.",
+      "motdRepeat": { "prefix": "MCPE;", "unit": "A", "count": 1400, "suffix": ";800;1.21.80;0;10;12345678;Sub;Survival;1;19132;19133;0;" },
+      "tags": ["content", "mtu"]
+    },
+    {
+      "id": "content/many-fields",
+      "desc": "30 fields. Absurd but well-formed; must not panic or truncate silently.",
+      "motdRepeat": { "prefix": "MCPE;Many;800;1.21.80;0;10;12345678;Sub;Survival;1;19132;19133", "unit": ";x", "count": 18, "suffix": ";" },
+      "tags": ["shape", "hostile"]
+    },
+    {
+      "id": "content/empty-string",
+      "desc": "Zero-length MOTD string with a valid length prefix of 0. Degenerate: phantom rebuilds it as a lone ';'. That is harmless (clients ignore empty trailing fields), so field preservation is not asserted - only that it neither panics nor errors.",
+      "motd": "",
+      "fieldCount": 1,
+      "noRoundTrip": true,
+      "tags": ["content", "hostile"]
+    },
+
+    {
+      "id": "malformed/empty-packet",
+      "desc": "Zero bytes.",
+      "rawHex": "",
+      "wantParseError": true,
+      "tags": ["malformed"]
+    },
+    {
+      "id": "malformed/id-only",
+      "desc": "Just the 0x1c packet ID and nothing else.",
+      "rawHex": "1c",
+      "wantParseError": true,
+      "tags": ["malformed"]
+    },
+    {
+      "id": "malformed/truncated-in-header",
+      "desc": "Cut off partway through the ping-time field.",
+      "rawHex": "1c00112233",
+      "wantParseError": true,
+      "tags": ["malformed"]
+    },
+    {
+      "id": "malformed/truncated-after-magic",
+      "desc": "Valid header and magic, then nothing - no length prefix at all.",
+      "rawHex": "1c0011223344556677a1b2c3d4e5f6071800ffff00fefefefefdfdfdfd12345678",
+      "wantParseError": true,
+      "tags": ["malformed"]
+    },
+    {
+      "id": "malformed/length-exceeds-body",
+      "desc": "Declares a 500-byte MOTD but supplies 4 bytes. bytes.Buffer.Read partial-fills without erroring, so this parses into a zero-padded struct instead of failing.",
+      "rawHex": "1c0011223344556677a1b2c3d4e5f6071800ffff00fefefefefdfdfdfd1234567801f44d435045",
+      "wantParseError": true,
+      "tags": ["malformed", "short-read"]
+    },
+    {
+      "id": "malformed/bad-magic",
+      "desc": "Otherwise complete, valid pong with the 16-byte RakNet magic zeroed. Reference implementations reject this; phantom reads the magic but never compares it. Built rather than hand-written so the ONLY defect is the magic - a truncated fixture would trip the length check first and prove nothing.",
+      "motd": "MCPE;Bad Magic;800;1.21.80;0;10;12345678;Sub;Survival;1;19132;19133;",
+      "magicOverride": "00000000000000000000000000000000",
+      "wantParseError": true,
+      "tags": ["malformed", "magic"]
+    },
+    {
+      "id": "malformed/wrong-packet-id",
+      "desc": "A complete, well-formed frame whose leading byte is 0x01 (Unconnected PING) instead of 0x1c (PONG). ReadUnconnectedPing discards the first byte without checking it, so a ping parses cleanly as a pong.",
+      "motd": "MCPE;Wrong ID;800;1.21.80;0;10;12345678;Sub;Survival;1;19132;19133;",
+      "packetIDOverride": 1,
+      "wantParseError": true,
+      "tags": ["malformed", "packet-id"]
+    },
+    {
+      "id": "malformed/zero-length-prefix",
+      "desc": "Well-formed frame declaring a 0-length MOTD.",
+      "rawHex": "1c0011223344556677a1b2c3d4e5f6071800ffff00fefefefefdfdfdfd123456780000",
+      "wantParseError": false,
+      "tags": ["malformed", "boundary"]
+    }
+  ]
+}

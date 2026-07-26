@@ -1,2 +1,6 @@
 bin/
 .DS_Store
+
+# Compatibility harness: Node deps are installed by `npm ci` from the committed
+# lockfiles, never committed themselves.
+node_modules/
