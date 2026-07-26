@@ -74,7 +74,7 @@ you did something wrong. Or I did ;)
 Usage: ./phantom-<os> [options] -server <server-ip>
 
 Options:
-  -6	Optional: Enables IPv6 support on port 19133 (experimental)
+  -6	Optional: Same as -ipv6 (legacy; broken in PowerShell — use -ipv6)
   -bind string
     	Optional: IP address to listen on. Defaults to all interfaces. (default "0.0.0.0")
   -bind_port int
@@ -82,6 +82,8 @@ Options:
     	Note that phantom always binds to port 19132 as well, so both ports need to be open.
   -debug
     	Optional: Enables debug logging
+  -ipv6
+    	Optional: Enables IPv6 support on port 19133 (experimental)
   -remove_ports
     	Optional: Forces ports to be excluded from pong packets (experimental)
   -server string

@@ -25,9 +25,14 @@ func main() {
 	bindPortArg := flag.Int("bind_port", 0, "Optional: Port to listen on. Defaults to 0, which selects a random port.\nNote that phantom always binds to port 19132 as well, so both ports need to be open.")
 	timeoutArg := flag.Int("timeout", 60, "Optional: Seconds to wait before cleaning up a disconnected client")
 	debugArg := flag.Bool("debug", false, "Optional: Enables debug logging")
-	ipv6Arg := flag.Bool("6", false, "Optional: Enables IPv6 support on port 19133 (experimental)")
 	removePortsArg := flag.Bool("remove_ports", false, "Optional: Forces ports to be excluded from pong packets (experimental)")
 	workersArg := flag.Uint("workers", 1, "Optional: Number of workers, useful for tweaking performance (experimental)")
+
+	// Prefer -ipv6: PowerShell treats bare -6 as a number, so the flag never reaches
+	// the process (see #124). Keep -6 as a legacy alias for cmd.exe / POSIX shells.
+	var enableIPv6 bool
+	flag.BoolVar(&enableIPv6, "ipv6", false, "Optional: Enables IPv6 support on port 19133 (experimental)")
+	flag.BoolVar(&enableIPv6, "6", false, "Optional: Same as -ipv6 (legacy; broken in PowerShell — use -ipv6)")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -65,7 +70,7 @@ func main() {
 		bindPortInt,
 		serverAddressString,
 		idleTimeout,
-		*ipv6Arg,
+		enableIPv6,
 		*removePortsArg,
 		*workersArg,
 	})
