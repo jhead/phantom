@@ -20,6 +20,11 @@ type UnconnectedPing struct {
 	Pong     PongData
 }
 
+// pongModeledFieldCount is the number of semicolon-separated MOTD fields
+// phantom models explicitly. Servers may send additional trailing fields;
+// those are stored in PongData.Extra and round-tripped unchanged.
+const pongModeledFieldCount = 12
+
 type PongData struct {
 	Edition         string
 	MOTD            string
@@ -33,6 +38,7 @@ type PongData struct {
 	NintendoLimited string
 	Port4           string
 	Port6           string
+	Extra           []string
 }
 
 var OfflinePong = UnconnectedPing{
@@ -120,11 +126,21 @@ func (r UnconnectedPing) Build() bytes.Buffer {
 // Reads pong data from the string off the wire into an empty PongData struct
 func readPong(raw string) PongData {
 	pong := PongData{}
-	pongParts := []interface{}{}
 
 	stringParts := strings.Split(raw, ";")
-	for _, val := range stringParts {
-		pongParts = append(pongParts, val)
+	if n := len(stringParts); n > 0 && stringParts[n-1] == "" {
+		stringParts = stringParts[:n-1]
+	}
+
+	modeled := stringParts
+	if len(stringParts) > pongModeledFieldCount {
+		pong.Extra = append([]string(nil), stringParts[pongModeledFieldCount:]...)
+		modeled = stringParts[:pongModeledFieldCount]
+	}
+
+	pongParts := make([]interface{}, len(modeled))
+	for i, val := range modeled {
+		pongParts[i] = val
 	}
 
 	util.MapFieldsToStruct(pongParts, &pong)
@@ -137,10 +153,10 @@ func readPong(raw string) PongData {
 func writePong(pong PongData) string {
 	var pongDataFields []string
 	pongDataFieldsRaw := util.MapStructToFields(&pong)
-	for _, value := range pongDataFieldsRaw {
-		stringValue := fmt.Sprintf("%v", value)
-		pongDataFields = append(pongDataFields, stringValue)
+	for i := 0; i < pongModeledFieldCount && i < len(pongDataFieldsRaw); i++ {
+		pongDataFields = append(pongDataFields, fmt.Sprintf("%v", pongDataFieldsRaw[i]))
 	}
+	pongDataFields = append(pongDataFields, pong.Extra...)
 
 	// Ensure that there aren't a bunch of ; on the end, but at least one
 	joined := strings.Join(pongDataFields, ";")
